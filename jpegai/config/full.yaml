@@ -1,0 +1,69 @@
+# Full width -- the paper's own channel counts. For the cloud (Kaggle) run.
+#
+# Inherits everything from tierA.yaml and overrides only the widths and the
+# training budget. Loader semantics: `_base` is merged first, then this file's
+# keys are deep-merged over it, so anything absent here keeps its Tier A value.
+#
+# Do not train this on the Mac: 16 GB unified memory is not enough at batch 8,
+# and MPS is unreliable over multi-day runs.
+
+_base: tierA.yaml
+name: full
+
+channels:
+  primary_latent:   160        # paper, section IV     -- CONFIRMED N_luma   = 160
+  secondary_latent:  96        # paper, section IV     -- CONFIRMED N_chroma =  96
+  # DERIVED == the branch latent width; the hyper autoencoder is channel-preserving.
+  # The paper's "160" was right and our 128 was wrong: the reference's 128 is only
+  # sep_chan_tool.py's unused fallback default. See tierA.yaml for the derivation
+  # and docs/06-normative-constants.md for line numbers.
+  hyper_latent:           160  # == primary_latent
+  hyper_secondary_latent:  96  # == secondary_latent
+  pred_primary_preshuffle:   640   # = 160 * 4; paper: p_ddot_Y is [640, H/32, W/32]
+  pred_secondary_preshuffle: 384   # =  96 * 4
+  secondary_synthesis_in:    256   # paper eq. (3): 96 + 160   -- CONFIRMED
+  analysis_width:  [128, 160, 192, 160]
+  synthesis_width: [160, 192, 160, 128]
+
+# NOTE: the loader replaces lists wholesale (it never merges element-wise), so
+# this block must repeat `has_encoder` and `signals` -- omitting them here would
+# drop them, not inherit them. See loader.py's module docstring.
+decoders:
+  - id: 0
+    name: SOP
+    upsample: pixelshuffle
+    final_channels: 32         # paper
+    allowed_ops: [conv, relu, relu6, pixelshuffle]
+    has_encoder: false         # CONFIRMED: no sop encoder exists; SOP reuses BOP's
+    signals: [0]
+  - id: 1
+    name: BOP
+    upsample: deconv4x4
+    final_channels: 64         # paper
+    allowed_ops: [conv, deconv, relu, relu6, pixelshuffle]
+    has_encoder: true
+    signals: [1, 0]
+  - id: 2
+    name: HOP
+    upsample: deconv4x4
+    final_channels: 128
+    allowed_ops: null
+    has_encoder: true
+    signals: [2, 1, 0]
+  - id: 3
+    name: MOP
+    enabled: false
+    upsample: deconv4x4
+    final_channels: 96
+    allowed_ops: null
+    has_encoder: false
+    signals: [3, 1, 0]
+
+train:
+  batch: 16                    # a P100/T4 handles this at 256x256
+  iterations: 600000
+  amp: true                    # safe on CUDA, unlike MPS
+  # Kaggle sessions are capped and preemptible; checkpoint often enough that a
+  # kill costs at most half an hour.
+  checkpoint_every_minutes: 30
+  resume: auto

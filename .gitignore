@@ -1,0 +1,35 @@
+# NOTE: git only treats a line that *starts* with `#` as a comment. A trailing
+# comment after a pattern becomes part of the pattern, and the rule then matches
+# nothing. Keep every comment on its own line.
+
+# Datasets and weights: large, regenerable, and not what a repo is for.
+# `setup.sh` fetches the datasets; `docs/07-training-runbook.md` trains the weights.
+# data/ is 4.8 GB (DIV2K, Kodak, Flickr2K); checkpoints/ is 2.9 GB and individual
+# files exceed GitHub's 100 MB limit; results/cache/ is rebuilt on the next runbench.
+data/
+checkpoints/
+results/cache/
+
+# Third-party. The WG1 reference software is a separate project under its own terms;
+# `docs/06-normative-constants.md` cites it file-by-file instead of vendoring it.
+ref/
+
+# The paper's own text and figures are IEEE copyright (DOI 10.1109/TCSVT.2025.3613244)
+# and are not ours to redistribute. `docs/` cites and paraphrases; the source stays local.
+paper/paper_text.txt
+paper/imgs/
+
+# Environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local-machine editor/agent state, not project configuration
+.claude/settings.local.json
+.DS_Store
+
+# Training writes these on failure; they are debugging artefacts, sometimes large
+nan.pt
+scratch_*.py

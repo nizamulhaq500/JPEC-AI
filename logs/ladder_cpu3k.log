@@ -1,0 +1,188 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+ladder   ladder_cpu3k  (tierA, mean-scale)
+betas    0.002, 0.03, 0.2
+steps    3,000 per point  ->  9,000 total
+warm     yes (each point starts from the previous)
+out      checkpoints/ladder_cpu3k
+
+[1/3] beta 0.002 (lambda*255^2 = 130)
+----------------------------------------------------------------------
+
+run      ladder_cpu3k/beta0.002
+device   cpu (10 cores)
+beta     0.002  (== compressai lambda*255^2 130)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_cpu3k/beta0.002
+
+MeanScaleHyperprior  latent=96  hyper=96
+  part                    params   kMAC/pxl
+  g_a                    852,416       22.2
+  g_s                    852,323      106.8
+  h_a                    544,032        0.6
+  h_s                  1,497,000        4.8
+  entropy_bottleneck       5,856           
+  TOTAL                3,751,627      134.4   (14.3 MiB fp32)
+  decoder (g_s+h_s)                   111.6   <- compare to paper SOP 8 / BOP 28 / HOP 215
+
+/Users/nizam/JPEC AI/jpegai/train/loop.py:337: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /Users/runner/work/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:823.)
+  window[k] = window.get(k, 0.0) + float(r[k])
+    500/3,000  loss  12.5203  bpp 0.5887  psnr  13.57  aux  3940.90  lr 5.00e-05   2.62 it/s  eta  0.26 h
+  1,000/3,000  loss   4.2515  bpp 0.5496  psnr  17.74  aux  3884.84  lr 1.00e-04   2.55 it/s  eta  0.22 h
+  1,500/3,000  loss   3.3191  bpp 0.5310  psnr  19.62  aux  3788.81  lr 1.00e-04   2.55 it/s  eta  0.16 h
+/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/compressai/models/video/google.py:353: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @amp.autocast(enabled=False)
+        rtcheck  act 0.4716  vs est  -0.74%  vs est_q  -0.09%  (sigma grid -0.65%)  oor y 0.001% z 0.000%  yhat exact  psnr 25.55  ok
+        valid    loss   3.5159  bpp 0.4812  psnr  20.65
+  2,000/3,000  loss   2.7953  bpp 0.5194  psnr  21.31  aux  3660.22  lr 1.00e-04   2.37 it/s  eta  0.12 h
+  2,500/3,000  loss   2.4807  bpp 0.5048  psnr  21.83  aux  3490.11  lr 1.00e-04   2.48 it/s  eta  0.06 h
+  3,000/3,000  loss   2.2662  bpp 0.4833  psnr  22.26  aux  3292.84  lr 1.00e-05   2.51 it/s  eta  0.00 h
+        rtcheck  act 0.3870  vs est  +1.08%  vs est_q  +0.29%  (sigma grid +0.79%)  oor y 0.000% z 0.000%  yhat exact  psnr 28.63  ok
+        valid    loss   2.5836  bpp 0.4362  psnr  22.03
+
+final    bpp 0.4362  psnr 22.03
+gate     actual 0.3870 bpp
+         vs estimate with quantised sigma: +0.29%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +1.08%   (of which +0.79% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_cpu3k/beta0.002/final.pt
+[2/3] beta 0.03 (lambda*255^2 = 1951)  warm start
+----------------------------------------------------------------------
+resumed warmstart.pt at step 0
+
+run      ladder_cpu3k/beta0.03
+device   cpu (10 cores)
+beta     0.03  (== compressai lambda*255^2 1951)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_cpu3k/beta0.03
+
+MeanScaleHyperprior  latent=96  hyper=96
+  part                    params   kMAC/pxl
+  g_a                    852,416       22.2
+  g_s                    852,323      106.8
+  h_a                    544,032        0.6
+  h_s                  1,497,000        4.8
+  entropy_bottleneck       5,856           
+  TOTAL                3,751,627      134.4   (14.3 MiB fp32)
+  decoder (g_s+h_s)                   111.6   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables                96.1 KiB
+
+    500/3,000  loss  24.9836  bpp 0.5519  psnr  22.61  aux  3191.92  lr 5.00e-05   2.58 it/s  eta  0.27 h
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+ladder   ladder_cpu3k  (tierA, mean-scale)
+betas    0.002, 0.03, 0.2
+steps    3,000 per point  ->  9,000 total
+warm     yes (each point starts from the previous)
+out      checkpoints/ladder_cpu3k
+
+[1/3] beta 0.002: final.pt exists, skipping
+[2/3] beta 0.03 (lambda*255^2 = 1951)  warm start
+----------------------------------------------------------------------
+WARNING: DataLoader workers unavailable (RuntimeError: torch_shm_manager at "/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/to); falling back to num_workers=0. Training will be slower but correct.
+resumed warmstart.pt at step 0
+
+run      ladder_cpu3k/beta0.03
+device   cpu (10 cores)
+beta     0.03  (== compressai lambda*255^2 1951)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_cpu3k/beta0.03
+
+MeanScaleHyperprior  latent=96  hyper=96
+  part                    params   kMAC/pxl
+  g_a                    852,416       22.2
+  g_s                    852,323      106.8
+  h_a                    544,032        0.6
+  h_s                  1,497,000        4.8
+  entropy_bottleneck       5,856           
+  TOTAL                3,751,627      134.4   (14.3 MiB fp32)
+  decoder                             111.6   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables                96.1 KiB
+
+    200/3,000  loss  25.4766  bpp 0.5052  psnr  22.54  aux  3209.60  lr 2.00e-05   2.69 it/s  eta  0.29 h
+    400/3,000  loss  24.4962  bpp 0.5674  psnr  22.80  aux  3188.52  lr 4.00e-05   2.69 it/s  eta  0.27 h
+    600/3,000  loss  24.5198  bpp 0.6173  psnr  22.84  aux  3157.53  lr 6.00e-05   2.59 it/s  eta  0.26 h
+    800/3,000  loss  24.5974  bpp 0.6640  psnr  22.56  aux  3116.56  lr 8.00e-05   2.56 it/s  eta  0.24 h
+  1,000/3,000  loss  23.4805  bpp 0.6993  psnr  22.89  aux  3064.39  lr 1.00e-04   2.56 it/s  eta  0.22 h
+  1,200/3,000  loss  23.1120  bpp 0.7316  psnr  23.53  aux  3000.25  lr 1.00e-04   2.53 it/s  eta  0.20 h
+  1,400/3,000  loss  23.1071  bpp 0.7613  psnr  23.33  aux  2929.40  lr 1.00e-04   2.50 it/s  eta  0.18 h
+  1,600/3,000  loss  21.4183  bpp 0.7622  psnr  23.67  aux  2846.98  lr 1.00e-04   2.56 it/s  eta  0.15 h
+  1,800/3,000  loss  20.9469  bpp 0.7780  psnr  23.96  aux  2759.35  lr 1.00e-04   2.58 it/s  eta  0.13 h
+  2,000/3,000  loss  20.8196  bpp 0.7932  psnr  23.98  aux  2660.56  lr 1.00e-04   2.55 it/s  eta  0.11 h
+/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/compressai/models/video/google.py:353: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @amp.autocast(enabled=False)
+        rtcheck  act 0.7977  vs est  +0.95%  vs est_q  +0.14%  (sigma grid +0.81%)  oor y 0.000% z 0.000%  yhat exact  psnr 29.00  ok
+        valid    loss  26.2007  bpp 0.8540  psnr  24.29
+  2,200/3,000  loss  20.8690  bpp 0.7964  psnr  23.75  aux  2562.08  lr 1.00e-04   2.37 it/s  eta  0.09 h
+  2,400/3,000  loss  19.8379  bpp 0.7983  psnr  24.14  aux  2455.32  lr 1.00e-04   2.51 it/s  eta  0.07 h
+  2,600/3,000  loss  19.5265  bpp 0.8065  psnr  24.13  aux  2344.93  lr 1.00e-04   2.57 it/s  eta  0.04 h
+  2,800/3,000  loss  18.4652  bpp 0.8084  psnr  24.70  aux  2218.67  lr 7.79e-05   2.61 it/s  eta  0.02 h
+  3,000/3,000  loss  17.2561  bpp 0.8050  psnr  25.03  aux  2112.85  lr 1.00e-05   2.63 it/s  eta  0.00 h
+
+final    bpp 0.8468  psnr 25.63
+gate     actual 0.7473 bpp
+         vs estimate with quantised sigma: +0.21%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +1.70%   (of which +1.49% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_cpu3k/beta0.03/final.pt
+[3/3] beta 0.2 (lambda*255^2 = 13005)  warm start
+----------------------------------------------------------------------
+WARNING: DataLoader workers unavailable (RuntimeError: torch_shm_manager at "/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/to); falling back to num_workers=0. Training will be slower but correct.
+resumed warmstart.pt at step 0
+
+run      ladder_cpu3k/beta0.2
+device   cpu (10 cores)
+beta     0.2  (== compressai lambda*255^2 13005)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_cpu3k/beta0.2
+
+MeanScaleHyperprior  latent=96  hyper=96
+  part                    params   kMAC/pxl
+  g_a                    852,416       22.2
+  g_s                    852,323      106.8
+  h_a                    544,032        0.6
+  h_s                  1,497,000        4.8
+  entropy_bottleneck       5,856           
+  TOTAL                3,751,627      134.4   (14.3 MiB fp32)
+  decoder                             111.6   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables                98.4 KiB
+
+    200/3,000  loss 108.9283  bpp 0.8076  psnr  25.16  aux  2066.87  lr 2.00e-05   2.69 it/s  eta  0.29 h
+    400/3,000  loss 106.4282  bpp 0.8303  psnr  25.33  aux  2029.84  lr 4.00e-05   2.71 it/s  eta  0.27 h
+    600/3,000  loss 109.5981  bpp 0.8512  psnr  25.09  aux  1983.15  lr 6.00e-05   2.70 it/s  eta  0.25 h
+    800/3,000  loss 111.4817  bpp 0.8861  psnr  24.82  aux  1926.78  lr 8.00e-05   2.72 it/s  eta  0.22 h
+  1,000/3,000  loss 110.2474  bpp 0.8888  psnr  24.67  aux  1859.22  lr 1.00e-04   2.62 it/s  eta  0.21 h
+  1,200/3,000  loss 109.9048  bpp 0.8987  psnr  24.95  aux  1782.68  lr 1.00e-04   2.57 it/s  eta  0.19 h
+  1,400/3,000  loss 109.8480  bpp 0.9301  psnr  24.70  aux  1689.15  lr 1.00e-04   2.53 it/s  eta  0.18 h
+  1,600/3,000  loss 103.5312  bpp 0.9175  psnr  24.98  aux  1588.89  lr 1.00e-04   2.47 it/s  eta  0.16 h
+  1,800/3,000  loss 103.6092  bpp 0.9394  psnr  24.92  aux  1487.37  lr 1.00e-04   2.47 it/s  eta  0.14 h
+  2,000/3,000  loss 102.3824  bpp 0.9512  psnr  25.03  aux  1374.31  lr 1.00e-04   2.49 it/s  eta  0.11 h
+        rtcheck  act 0.9404  vs est  +0.45%  vs est_q  +0.12%  (sigma grid +0.33%)  oor y 0.000% z 0.000%  yhat exact  psnr 29.10  ok
+        valid    loss 125.9172  bpp 1.0185  psnr  25.21
+  2,200/3,000  loss 104.0825  bpp 0.9636  psnr  24.71  aux  1256.41  lr 1.00e-04   2.39 it/s  eta  0.09 h
+  2,400/3,000  loss 100.5379  bpp 0.9468  psnr  25.13  aux  1150.88  lr 1.00e-04   2.57 it/s  eta  0.06 h
+  2,600/3,000  loss  97.2438  bpp 0.9686  psnr  25.29  aux  1035.12  lr 1.00e-04   2.48 it/s  eta  0.04 h
+  2,800/3,000  loss  95.1740  bpp 0.9718  psnr  25.30  aux   912.95  lr 7.79e-05   2.42 it/s  eta  0.02 h
+  3,000/3,000  loss  88.6610  bpp 0.9620  psnr  25.83  aux   809.99  lr 1.00e-05   2.42 it/s  eta  0.00 h
+
+final    bpp 1.0165  psnr 26.40
+gate     actual 0.9143 bpp
+         vs estimate with quantised sigma: +0.13%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +0.58%   (of which +0.45% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_cpu3k/beta0.2/final.pt
+
+==============================================================================
+ladder summary   (act bpp and psnr are from the REAL bitstream)
+------------------------------------------------------------------------------
+    beta   lambda    steps  est bpp  act bpp    psnr   gap_q     oor  exact
+   0.002      130    3,000   0.4362   0.3870   22.03   +0.29   0.000   True
+    0.03     1951    3,000   0.8468   0.7473   25.63   +0.21   0.000   True
+     0.2    13005    3,000   1.0165   0.9143   26.40   +0.13   0.000   True
+------------------------------------------------------------------------------
+gate:    every rate point agrees with its quantised-sigma estimate to within +-0.5%
+valid:   /Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR
+
+next: python -m jpegai.eval.runbench --neural checkpoints/ladder_cpu3k --codecs jpeg,webp,avif

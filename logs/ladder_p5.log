@@ -1,0 +1,518 @@
+ladder   ladder_p5  (full, twobranch-split)
+betas    0.002, 0.012, 0.03, 0.075, 0.2
+steps    50,000 per point  ->  250,000 total
+warm     yes (each point starts from the previous)
+out      checkpoints/ladder_p5
+
+[1/5] beta 0.002 (lambda*255^2 = 130)
+----------------------------------------------------------------------
+
+run      ladder_p5/beta0.002
+device   mps (Apple Metal)
+beta     0.002  (== compressai lambda*255^2 130)
+steps    0 -> 50,000   batch 8  crop 256
+out      checkpoints/ladder_p5/beta0.002
+
+TwoBranchCodec  internal 420  split-hyper  luma=160/160  chroma=96/96  concat=256
+  part                    params   kMAC/pxl
+  g_a_y                2,051,840       47.8
+  g_s_y                2,180,513      254.0
+  h_a_y                1,152,800        1.5
+  h_s_y                2,075,040        1.4
+  g_a_uv               1,241,248       14.6
+  g_s_uv               1,801,954       66.4
+  h_a_uv                 415,200        0.5
+  h_s_uv                 747,360        0.5
+  eb_y                     9,760           
+  eb_uv                    5,856           
+  h_scale_y              642,720        0.2
+  h_scale_uv             232,032        0.1
+  TOTAL               12,556,323      386.8   (47.9 MiB fp32)
+  decoder                             322.4   <- compare to paper SOP 8 / BOP 28 / HOP 215
+
+    200/50,000  loss  24.4806  bpp 3.0043  psnr   6.43  aux 10536.39  lr 2.00e-05   2.01 it/s  eta  6.88 h  Y/U/V 12.31/11.62/13.40  chroma 37.4%
+    400/50,000  loss   8.9076  bpp 2.9506  psnr  15.88  aux 10501.38  lr 4.00e-05   2.06 it/s  eta  6.68 h  Y/U/V 20.27/21.31/21.04  chroma 37.9%
+    600/50,000  loss   6.5988  bpp 2.0695  psnr  17.29  aux 10497.56  lr 6.00e-05   2.08 it/s  eta  6.60 h  Y/U/V 21.15/24.01/21.76  chroma 39.0%
+    800/50,000  loss   5.2596  bpp 1.4377  psnr  17.79  aux 10522.26  lr 8.00e-05   2.09 it/s  eta  6.53 h  Y/U/V 21.90/24.48/21.93  chroma 27.9%
+  1,000/50,000  loss   4.5700  bpp 1.2494  psnr  17.92  aux 10534.90  lr 1.00e-04   2.09 it/s  eta  6.51 h  Y/U/V 22.55/24.26/21.94  chroma 25.7%
+  1,200/50,000  loss   4.2390  bpp 1.1399  psnr  18.08  aux 10531.64  lr 1.00e-04   2.09 it/s  eta  6.48 h  Y/U/V 22.73/24.95/21.75  chroma 27.1%
+  1,400/50,000  loss   3.6978  bpp 1.0569  psnr  19.24  aux 10516.24  lr 1.00e-04   2.09 it/s  eta  6.45 h  Y/U/V 23.43/26.32/23.37  chroma 29.4%
+  1,600/50,000  loss   3.4155  bpp 1.0512  psnr  20.96  aux 10467.19  lr 1.00e-04   2.06 it/s  eta  6.54 h  Y/U/V 23.33/28.13/28.14  chroma 31.0%
+  1,800/50,000  loss   3.1081  bpp 1.0020  psnr  21.67  aux 10392.64  lr 1.00e-04   2.09 it/s  eta  6.40 h  Y/U/V 23.75/29.29/29.28  chroma 31.2%
+  2,000/50,000  loss   2.9050  bpp 0.9662  psnr  22.09  aux 10295.89  lr 1.00e-04   2.09 it/s  eta  6.37 h  Y/U/V 24.04/29.78/30.22  chroma 30.8%
+/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/compressai/models/video/google.py:353: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @amp.autocast(enabled=False)
+        rtcheck  act 1.8658  vs est  -9.28%  vs est_q  -8.02%  (sigma grid -1.37%)  oor y 0.001% z 26.063% (uv y 2.329% z 67.238%)  worst z_uv +6229 B (+65.3%)  yhat exact  psnr 23.20  **
+        valid    loss   4.1628  bpp 1.7804  psnr  21.36
+  2,200/50,000  loss   2.8629  bpp 0.9341  psnr  21.93  aux 10181.67  lr 1.00e-04   1.97 it/s  eta  6.74 h  Y/U/V 23.75/30.08/30.29  chroma 30.8%
+  2,400/50,000  loss   2.7207  bpp 0.9134  psnr  22.11  aux 10032.88  lr 1.00e-04   2.09 it/s  eta  6.33 h  Y/U/V 24.21/29.82/29.83  chroma 31.3%
+  2,600/50,000  loss   2.5794  bpp 0.8756  psnr  22.78  aux  9855.46  lr 1.00e-04   2.09 it/s  eta  6.29 h  Y/U/V 24.32/31.01/31.25  chroma 30.7%
+  2,800/50,000  loss   2.5222  bpp 0.8603  psnr  22.41  aux  9645.46  lr 1.00e-04   2.09 it/s  eta  6.27 h  Y/U/V 24.27/30.17/30.83  chroma 30.8%
+  3,000/50,000  loss   2.4012  bpp 0.8264  psnr  22.97  aux  9403.71  lr 1.00e-04   2.09 it/s  eta  6.26 h  Y/U/V 24.51/30.96/31.66  chroma 31.0%
+  3,200/50,000  loss   2.4201  bpp 0.8244  psnr  22.72  aux  9134.16  lr 1.00e-04   2.09 it/s  eta  6.22 h  Y/U/V 24.50/30.69/31.20  chroma 31.3%
+  3,400/50,000  loss   2.2872  bpp 0.7987  psnr  23.19  aux  8842.04  lr 1.00e-04   2.09 it/s  eta  6.19 h  Y/U/V 24.81/31.34/31.93  chroma 30.6%
+  3,600/50,000  loss   2.2596  bpp 0.7745  psnr  23.06  aux  8549.97  lr 1.00e-04   2.09 it/s  eta  6.16 h  Y/U/V 24.48/31.44/31.96  chroma 30.4%
+  3,800/50,000  loss   2.1728  bpp 0.7591  psnr  23.36  aux  8256.08  lr 1.00e-04   2.09 it/s  eta  6.14 h  Y/U/V 24.97/31.77/31.99  chroma 30.7%
+  4,000/50,000  loss   2.0790  bpp 0.7464  psnr  23.55  aux  7934.87  lr 1.00e-04   2.09 it/s  eta  6.11 h  Y/U/V 25.11/32.07/32.37  chroma 31.1%
+        rtcheck  act 0.5449  vs est  +3.09%  vs est_q  +5.28%  (sigma grid -2.08%)  oor y 0.000% z 2.227% (uv y 0.000% z 23.691%)  worst z_uv +1882 B (+29.3%)  yhat exact  psnr 26.64  **
+        valid    loss   2.2067  bpp 0.6395  psnr  23.77
+  4,200/50,000  loss   2.0751  bpp 0.7389  psnr  23.48  aux  7565.51  lr 1.00e-04   2.03 it/s  eta  6.26 h  Y/U/V 25.19/31.37/32.08  chroma 30.9%
+  4,400/50,000  loss   2.0081  bpp 0.7134  psnr  23.67  aux  7182.70  lr 1.00e-04   2.09 it/s  eta  6.05 h  Y/U/V 25.13/32.07/32.77  chroma 30.4%
+  4,600/50,000  loss   2.0037  bpp 0.7103  psnr  23.45  aux  6795.87  lr 1.00e-04   2.09 it/s  eta  6.03 h  Y/U/V 25.05/31.56/32.66  chroma 29.9%
+  4,800/50,000  loss   1.9701  bpp 0.7190  psnr  23.65  aux  6400.89  lr 1.00e-04   2.09 it/s  eta  6.00 h  Y/U/V 25.63/31.34/31.88  chroma 30.2%
+  5,000/50,000  loss   1.9842  bpp 0.6987  psnr  23.48  aux  5967.32  lr 1.00e-04   2.09 it/s  eta  5.97 h  Y/U/V 25.08/31.69/32.19  chroma 29.4%
+  5,200/50,000  loss   1.9177  bpp 0.6894  psnr  23.59  aux  5553.52  lr 1.00e-04   2.09 it/s  eta  5.95 h  Y/U/V 25.44/31.36/31.97  chroma 29.6%
+  5,400/50,000  loss   1.8710  bpp 0.6734  psnr  23.88  aux  5143.75  lr 1.00e-04   2.09 it/s  eta  5.92 h  Y/U/V 25.65/31.74/32.29  chroma 30.2%
+  5,600/50,000  loss   1.7457  bpp 0.6431  psnr  24.60  aux  4634.98  lr 1.00e-04   2.09 it/s  eta  5.91 h  Y/U/V 25.99/33.39/33.35  chroma 29.3%
+  5,800/50,000  loss   1.7578  bpp 0.6382  psnr  24.28  aux  4122.67  lr 1.00e-04   2.09 it/s  eta  5.87 h  Y/U/V 25.74/32.71/33.11  chroma 29.6%
+  6,000/50,000  loss   1.7595  bpp 0.6414  psnr  24.25  aux  3635.52  lr 1.00e-04   2.09 it/s  eta  5.84 h  Y/U/V 25.84/32.33/33.14  chroma 29.4%
+        rtcheck  act 0.4408  vs est  +0.51%  vs est_q  +1.53%  (sigma grid -1.01%)  oor y 0.000% z 1.380% (uv y 0.000% z 3.205%)  worst z_uv +288 B (+7.6%)  yhat exact  psnr 26.14  **
+        valid    loss   1.9701  bpp 0.5307  psnr  23.75
+  6,200/50,000  loss   1.8541  bpp 0.6711  psnr  23.44  aux  3176.26  lr 1.00e-04   2.03 it/s  eta  5.99 h  Y/U/V 25.70/30.38/32.05  chroma 29.5%
+  6,400/50,000  loss   1.8227  bpp 0.6507  psnr  23.40  aux  2790.41  lr 1.00e-04   2.09 it/s  eta  5.80 h  Y/U/V 25.57/30.89/31.33  chroma 28.9%
+  6,600/50,000  loss   1.9281  bpp 0.6844  psnr  22.69  aux  2491.38  lr 1.00e-04   2.09 it/s  eta  5.76 h  Y/U/V 25.50/28.85/30.22  chroma 30.0%
+  6,800/50,000  loss   1.7351  bpp 0.6236  psnr  24.17  aux  2255.08  lr 1.00e-04   2.09 it/s  eta  5.73 h  Y/U/V 25.84/32.35/32.77  chroma 29.3%
+  7,000/50,000  loss   1.7312  bpp 0.6326  psnr  23.87  aux  2074.08  lr 1.00e-04   2.09 it/s  eta  5.71 h  Y/U/V 25.94/30.77/32.43  chroma 29.8%
+  7,200/50,000  loss   1.7279  bpp 0.6243  psnr  23.85  aux  1962.45  lr 1.00e-04   2.09 it/s  eta  5.68 h  Y/U/V 25.94/30.87/31.78  chroma 30.7%
+  7,400/50,000  loss   1.7022  bpp 0.6228  psnr  24.05  aux  1927.45  lr 1.00e-04   2.09 it/s  eta  5.66 h  Y/U/V 26.13/31.14/32.25  chroma 30.8%
+  7,600/50,000  loss   1.6019  bpp 0.6009  psnr  24.62  aux  1969.00  lr 1.00e-04   2.09 it/s  eta  5.63 h  Y/U/V 26.33/32.46/33.26  chroma 29.9%
+  7,800/50,000  loss   1.6691  bpp 0.6200  psnr  24.00  aux  2013.92  lr 1.00e-04   2.09 it/s  eta  5.60 h  Y/U/V 26.15/30.99/31.87  chroma 31.0%
+  8,000/50,000  loss   1.6087  bpp 0.5999  psnr  24.45  aux  2100.45  lr 1.00e-04   2.09 it/s  eta  5.57 h  Y/U/V 26.13/32.52/33.28  chroma 29.6%
+        rtcheck  act 0.4023  vs est  -0.93%  vs est_q  +0.79%  (sigma grid -1.71%)  oor y 0.000% z 1.063% (uv y 0.000% z 1.186%)  worst z +170 B (+5.5%)  yhat exact  psnr 29.99  **
+        valid    loss   1.6893  bpp 0.5248  psnr  25.53
+  8,200/50,000  loss   1.5587  bpp 0.5954  psnr  24.74  aux  2325.28  lr 1.00e-04   2.03 it/s  eta  5.71 h  Y/U/V 26.43/32.53/33.95  chroma 30.0%
+  8,400/50,000  loss   1.5334  bpp 0.5944  psnr  24.85  aux  2494.43  lr 1.00e-04   2.09 it/s  eta  5.53 h  Y/U/V 26.86/31.65/33.15  chroma 30.4%
+  8,600/50,000  loss   1.5341  bpp 0.5808  psnr  24.85  aux  2704.51  lr 1.00e-04   2.09 it/s  eta  5.50 h  Y/U/V 26.20/33.47/34.11  chroma 28.6%
+  8,800/50,000  loss   1.4976  bpp 0.5801  psnr  25.08  aux  2994.84  lr 1.00e-04   2.09 it/s  eta  5.47 h  Y/U/V 26.53/33.89/33.53  chroma 29.1%
+  9,000/50,000  loss   1.5215  bpp 0.5926  psnr  24.62  aux  3234.47  lr 1.00e-04   2.09 it/s  eta  5.44 h  Y/U/V 26.77/31.31/32.86  chroma 30.4%
+  9,200/50,000  loss   1.5118  bpp 0.5795  psnr  24.82  aux  3404.80  lr 1.00e-04   2.09 it/s  eta  5.42 h  Y/U/V 26.53/32.29/33.79  chroma 29.6%
+  9,400/50,000  loss   1.4612  bpp 0.5735  psnr  25.38  aux  3687.21  lr 1.00e-04   2.09 it/s  eta  5.39 h  Y/U/V 26.69/34.24/34.51  chroma 28.2%
+  9,600/50,000  loss   1.4310  bpp 0.5692  psnr  25.36  aux  4027.42  lr 1.00e-04   2.09 it/s  eta  5.36 h  Y/U/V 26.77/34.18/34.01  chroma 28.1%
+  9,800/50,000  loss   1.4821  bpp 0.5804  psnr  24.78  aux  4268.16  lr 1.00e-04   2.09 it/s  eta  5.34 h  Y/U/V 26.72/32.18/32.77  chroma 29.9%
+ 10,000/50,000  loss   1.4375  bpp 0.5725  psnr  25.23  aux  4464.19  lr 1.00e-04   2.09 it/s  eta  5.31 h  Y/U/V 26.80/33.36/33.77  chroma 28.7%
+        rtcheck  act 0.3974  vs est  -0.76%  vs est_q  +0.51%  (sigma grid -1.26%)  oor y 0.000% z 0.751% (uv y 0.000% z 0.477%)  worst z +110 B (+4.6%)  yhat exact  psnr 30.27  **
+        valid    loss   1.5778  bpp 0.5137  psnr  26.20
+ 10,200/50,000  loss   1.4154  bpp 0.5651  psnr  25.46  aux  4736.46  lr 1.00e-04   2.03 it/s  eta  5.44 h  Y/U/V 26.74/34.47/34.21  chroma 27.7%
+ 10,400/50,000  loss   1.3693  bpp 0.5548  psnr  25.79  aux  5056.22  lr 1.00e-04   2.09 it/s  eta  5.27 h  Y/U/V 27.08/34.61/34.95  chroma 27.7%
+ 10,600/50,000  loss   1.4144  bpp 0.5645  psnr  24.99  aux  5388.03  lr 1.00e-04   2.09 it/s  eta  5.23 h  Y/U/V 26.88/32.57/32.90  chroma 29.1%
+ 10,800/50,000  loss   1.4189  bpp 0.5620  psnr  25.19  aux  5523.46  lr 1.00e-04   2.09 it/s  eta  5.21 h  Y/U/V 26.74/33.24/34.03  chroma 28.2%
+ 11,000/50,000  loss   1.3590  bpp 0.5466  psnr  25.67  aux  5778.29  lr 1.00e-04   2.09 it/s  eta  5.18 h  Y/U/V 26.98/34.70/34.57  chroma 27.5%
+ 11,200/50,000  loss   1.3676  bpp 0.5483  psnr  25.63  aux  6053.22  lr 1.00e-04   2.09 it/s  eta  5.15 h  Y/U/V 26.81/34.78/34.87  chroma 27.2%
+ 11,400/50,000  loss   1.3383  bpp 0.5423  psnr  25.84  aux  6340.76  lr 1.00e-04   2.09 it/s  eta  5.12 h  Y/U/V 27.10/34.69/35.12  chroma 27.3%
+ 11,600/50,000  loss   1.3508  bpp 0.5463  psnr  25.70  aux  6636.01  lr 1.00e-04   2.09 it/s  eta  5.10 h  Y/U/V 26.96/34.64/34.72  chroma 27.2%
+ 11,800/50,000  loss   1.3342  bpp 0.5389  psnr  25.74  aux  6945.54  lr 1.00e-04   2.09 it/s  eta  5.07 h  Y/U/V 26.99/34.65/34.96  chroma 27.2%
+ 12,000/50,000  loss   1.3133  bpp 0.5388  psnr  25.90  aux  7213.76  lr 1.00e-04   2.09 it/s  eta  5.05 h  Y/U/V 27.17/34.77/34.77  chroma 27.2%
+        rtcheck  act 0.4084  vs est  -2.25%  vs est_q  -0.06%  (sigma grid -2.19%)  oor y 0.000% z 0.690% (uv y 0.000% z 0.911%)  worst z_uv +91 B (+5.6%)  yhat exact  psnr 31.02  **
+        valid    loss   1.4809  bpp 0.5007  psnr  26.68
+ 12,200/50,000  loss   1.3193  bpp 0.5360  psnr  25.85  aux  7459.34  lr 1.00e-04   2.03 it/s  eta  5.17 h  Y/U/V 27.01/35.31/34.84  chroma 27.0%
+ 12,400/50,000  loss   1.2937  bpp 0.5317  psnr  26.01  aux  7707.59  lr 1.00e-04   2.09 it/s  eta  4.99 h  Y/U/V 27.30/34.76/34.92  chroma 27.1%
+ 12,600/50,000  loss   1.3190  bpp 0.5355  psnr  25.82  aux  7927.39  lr 1.00e-04   2.09 it/s  eta  4.97 h  Y/U/V 27.05/34.89/35.02  chroma 26.7%
+ 12,800/50,000  loss   1.2960  bpp 0.5286  psnr  25.92  aux  8152.50  lr 1.00e-04   2.09 it/s  eta  4.94 h  Y/U/V 27.06/35.15/35.46  chroma 26.4%
+ 13,000/50,000  loss   1.3275  bpp 0.5365  psnr  25.80  aux  8351.91  lr 1.00e-04   2.09 it/s  eta  4.91 h  Y/U/V 27.03/34.94/34.59  chroma 27.1%
+ 13,200/50,000  loss   1.2805  bpp 0.5234  psnr  26.04  aux  8474.73  lr 1.00e-04   2.09 it/s  eta  4.89 h  Y/U/V 27.32/35.09/34.87  chroma 26.8%
+ 13,400/50,000  loss   1.3035  bpp 0.5275  psnr  25.75  aux  8586.35  lr 1.00e-04   2.09 it/s  eta  4.86 h  Y/U/V 26.96/35.12/34.77  chroma 26.3%
+ 13,600/50,000  loss   1.2868  bpp 0.5226  psnr  25.88  aux  8670.28  lr 1.00e-04   2.09 it/s  eta  4.83 h  Y/U/V 27.24/34.78/34.84  chroma 26.4%
+ 13,800/50,000  loss   1.2993  bpp 0.5288  psnr  25.96  aux  8783.82  lr 1.00e-04   2.09 it/s  eta  4.81 h  Y/U/V 27.16/35.04/35.17  chroma 27.1%
+ 14,000/50,000  loss   1.2980  bpp 0.5270  psnr  25.78  aux  8848.75  lr 1.00e-04   2.09 it/s  eta  4.78 h  Y/U/V 27.17/34.48/34.76  chroma 26.4%
+        rtcheck  act 0.4195  vs est  -3.36%  vs est_q  -0.97%  (sigma grid -2.42%)  oor y 0.000% z 0.395% (uv y 0.000% z 0.145%)  worst z +40 B (+2.1%)  yhat exact  psnr 31.06  **
+        valid    loss   1.4439  bpp 0.4862  psnr  26.61
+ 14,200/50,000  loss   1.2636  bpp 0.5200  psnr  25.90  aux  8947.43  lr 1.00e-04   2.03 it/s  eta  4.90 h  Y/U/V 27.38/34.59/34.53  chroma 26.6%
+ 14,400/50,000  loss   1.2907  bpp 0.5188  psnr  25.83  aux  9071.99  lr 1.00e-04   2.09 it/s  eta  4.73 h  Y/U/V 26.93/35.21/35.37  chroma 26.2%
+ 14,600/50,000  loss   1.2605  bpp 0.5182  psnr  25.98  aux  9160.82  lr 1.00e-04   2.09 it/s  eta  4.71 h  Y/U/V 27.27/34.83/35.09  chroma 26.3%
+ 14,800/50,000  loss   1.2682  bpp 0.5192  psnr  25.97  aux  9202.46  lr 1.00e-04   2.09 it/s  eta  4.67 h  Y/U/V 27.32/34.76/34.87  chroma 26.4%
+ 15,000/50,000  loss   1.2453  bpp 0.5153  psnr  26.20  aux  9156.79  lr 1.00e-04   2.09 it/s  eta  4.65 h  Y/U/V 27.33/35.40/35.56  chroma 26.4%
+ 15,200/50,000  loss   1.2503  bpp 0.5211  psnr  26.07  aux  9210.05  lr 1.00e-04   2.09 it/s  eta  4.62 h  Y/U/V 27.26/35.31/35.02  chroma 26.4%
+ 15,400/50,000  loss   1.2502  bpp 0.5189  psnr  26.00  aux  9247.61  lr 1.00e-04   2.09 it/s  eta  4.60 h  Y/U/V 27.37/34.60/34.78  chroma 26.3%
+ 15,600/50,000  loss   1.2066  bpp 0.5136  psnr  26.50  aux  9192.52  lr 1.00e-04   2.09 it/s  eta  4.57 h  Y/U/V 27.61/35.96/35.85  chroma 26.2%
+ 15,800/50,000  loss   1.2509  bpp 0.5190  psnr  25.97  aux  9195.29  lr 1.00e-04   2.09 it/s  eta  4.54 h  Y/U/V 27.30/35.08/34.77  chroma 26.2%
+ 16,000/50,000  loss   1.2490  bpp 0.5161  psnr  25.91  aux  9097.92  lr 1.00e-04   2.09 it/s  eta  4.51 h  Y/U/V 27.15/34.95/34.85  chroma 26.5%
+        rtcheck  act 0.3904  vs est  -2.19%  vs est_q  -0.13%  (sigma grid -2.07%)  oor y 0.000% z 0.187% (uv y 0.000% z 0.007%)  worst z +25 B (+1.4%)  yhat exact  psnr 30.66  ok
+        valid    loss   1.3649  bpp 0.4638  psnr  26.04
+ 16,200/50,000  loss   1.2259  bpp 0.5164  psnr  26.12  aux  9028.61  lr 1.00e-04   2.03 it/s  eta  4.62 h  Y/U/V 27.51/34.80/34.95  chroma 26.1%
+ 16,400/50,000  loss   1.2494  bpp 0.5179  psnr  26.05  aux  8928.20  lr 1.00e-04   2.09 it/s  eta  4.46 h  Y/U/V 27.15/35.50/35.30  chroma 26.0%
+ 16,600/50,000  loss   1.2229  bpp 0.5154  psnr  26.16  aux  8894.96  lr 1.00e-04   2.09 it/s  eta  4.43 h  Y/U/V 27.32/35.57/35.27  chroma 25.9%
+ 16,800/50,000  loss   1.2230  bpp 0.5090  psnr  26.28  aux  8807.59  lr 1.00e-04   2.09 it/s  eta  4.40 h  Y/U/V 27.60/35.17/35.15  chroma 26.5%
+ 17,000/50,000  loss   1.2297  bpp 0.5108  psnr  26.20  aux  8677.21  lr 1.00e-04   2.09 it/s  eta  4.38 h  Y/U/V 27.49/35.24/34.95  chroma 26.1%
+ 17,200/50,000  loss   1.2101  bpp 0.5128  psnr  26.23  aux  8632.75  lr 1.00e-04   2.09 it/s  eta  4.35 h  Y/U/V 27.44/35.11/35.37  chroma 26.1%
+ 17,400/50,000  loss   1.2184  bpp 0.5149  psnr  26.21  aux  8470.64  lr 1.00e-04   2.09 it/s  eta  4.33 h  Y/U/V 27.37/35.53/35.46  chroma 25.9%
+ 17,600/50,000  loss   1.1919  bpp 0.5107  psnr  26.36  aux  8381.85  lr 1.00e-04   2.09 it/s  eta  4.30 h  Y/U/V 27.61/35.35/35.65  chroma 26.2%
+ 17,800/50,000  loss   1.2032  bpp 0.5105  psnr  26.39  aux  8155.18  lr 1.00e-04   2.09 it/s  eta  4.27 h  Y/U/V 27.54/35.62/35.57  chroma 26.1%
+ 18,000/50,000  loss   1.1834  bpp 0.5096  psnr  26.39  aux  8066.69  lr 1.00e-04   2.09 it/s  eta  4.25 h  Y/U/V 27.57/35.65/35.44  chroma 26.0%
+        rtcheck  act 0.4245  vs est  -3.25%  vs est_q  -0.95%  (sigma grid -2.32%)  oor y 0.000% z 0.074% (uv y 0.000% z 0.000%)  worst z +12 B (+0.5%)  yhat exact  psnr 30.34  **
+        valid    loss   1.3531  bpp 0.4904  psnr  26.58
+ 18,200/50,000  loss   1.1823  bpp 0.5104  psnr  26.40  aux  7951.48  lr 1.00e-04   2.03 it/s  eta  4.35 h  Y/U/V 27.59/35.44/35.71  chroma 25.9%
+ 18,400/50,000  loss   1.1941  bpp 0.5143  psnr  26.48  aux  7755.70  lr 1.00e-04   2.09 it/s  eta  4.19 h  Y/U/V 27.58/35.90/35.86  chroma 25.8%
+ 18,600/50,000  loss   1.1811  bpp 0.5096  psnr  26.55  aux  7515.53  lr 1.00e-04   2.09 it/s  eta  4.17 h  Y/U/V 27.67/35.83/35.90  chroma 26.2%
+ 18,800/50,000  loss   1.1845  bpp 0.5106  psnr  26.41  aux  7361.57  lr 1.00e-04   2.09 it/s  eta  4.14 h  Y/U/V 27.54/35.86/35.69  chroma 26.0%
+ 19,000/50,000  loss   1.1662  bpp 0.5058  psnr  26.53  aux  7172.84  lr 1.00e-04   2.09 it/s  eta  4.12 h  Y/U/V 27.70/35.88/35.77  chroma 26.0%
+ 19,200/50,000  loss   1.1677  bpp 0.5084  psnr  26.55  aux  6931.81  lr 1.00e-04   2.09 it/s  eta  4.09 h  Y/U/V 27.68/35.84/35.95  chroma 26.0%
+ 19,400/50,000  loss   1.1661  bpp 0.5089  psnr  26.57  aux  6737.43  lr 1.00e-04   2.09 it/s  eta  4.06 h  Y/U/V 27.63/35.97/35.96  chroma 25.9%
+ 19,600/50,000  loss   1.1777  bpp 0.5096  psnr  26.60  aux  6432.34  lr 1.00e-04   2.09 it/s  eta  4.04 h  Y/U/V 27.70/36.22/35.74  chroma 25.8%
+ 19,800/50,000  loss   1.1632  bpp 0.5084  psnr  26.59  aux  6159.41  lr 1.00e-04   2.09 it/s  eta  4.02 h  Y/U/V 27.75/35.70/35.83  chroma 26.0%
+ 20,000/50,000  loss   1.1562  bpp 0.5072  psnr  26.63  aux  5882.42  lr 1.00e-04   2.09 it/s  eta  3.98 h  Y/U/V 27.69/36.40/36.09  chroma 25.6%
+        rtcheck  act 0.3851  vs est  -2.39%  vs est_q  -0.15%  (sigma grid -2.25%)  oor y 0.000% z 0.039% (uv y 0.000% z 0.000%)  worst z_uv +12 B (+1.0%)  yhat exact  psnr 31.17  ok
+        valid    loss   1.2847  bpp 0.4582  psnr  27.28
+ 20,200/50,000  loss   1.1826  bpp 0.5101  psnr  26.46  aux  5594.49  lr 1.00e-04   2.03 it/s  eta  4.08 h  Y/U/V 27.57/35.96/35.64  chroma 25.7%
+ 20,400/50,000  loss   1.1578  bpp 0.5069  psnr  26.47  aux  5324.47  lr 1.00e-04   2.09 it/s  eta  3.93 h  Y/U/V 27.63/35.41/35.81  chroma 25.8%
+ 20,600/50,000  loss   1.1559  bpp 0.5079  psnr  26.68  aux  4817.10  lr 1.00e-04   2.09 it/s  eta  3.90 h  Y/U/V 27.91/36.02/35.59  chroma 26.0%
+ 20,800/50,000  loss   1.1362  bpp 0.5023  psnr  26.69  aux  4473.62  lr 1.00e-04   2.09 it/s  eta  3.88 h  Y/U/V 27.84/36.07/35.98  chroma 26.0%
+ 21,000/50,000  loss   1.1467  bpp 0.5077  psnr  26.68  aux  4180.10  lr 1.00e-04   2.09 it/s  eta  3.85 h  Y/U/V 27.73/36.29/36.08  chroma 25.5%
+ 21,200/50,000  loss   1.1457  bpp 0.5058  psnr  26.64  aux  3872.46  lr 1.00e-04   2.09 it/s  eta  3.82 h  Y/U/V 27.83/35.67/35.81  chroma 25.9%
+ 21,400/50,000  loss   1.1463  bpp 0.5047  psnr  26.62  aux  3603.79  lr 1.00e-04   2.09 it/s  eta  3.80 h  Y/U/V 27.72/36.21/35.88  chroma 25.7%
+ 21,600/50,000  loss   1.1179  bpp 0.5013  psnr  26.84  aux  3370.14  lr 1.00e-04   2.09 it/s  eta  3.77 h  Y/U/V 27.97/36.20/36.21  chroma 25.7%
+ 21,800/50,000  loss   1.1481  bpp 0.5077  psnr  26.57  aux  3106.15  lr 1.00e-04   2.09 it/s  eta  3.75 h  Y/U/V 27.72/35.99/35.59  chroma 25.8%
+ 22,000/50,000  loss   1.1205  bpp 0.5024  psnr  26.74  aux  2860.66  lr 1.00e-04   2.09 it/s  eta  3.72 h  Y/U/V 27.84/36.30/35.96  chroma 25.8%
+        rtcheck  act 0.3734  vs est  -1.96%  vs est_q  -0.12%  (sigma grid -1.84%)  oor y 0.001% z 0.013% (uv y 0.000% z 0.000%)  worst z_uv +27 B (+1.7%)  yhat exact  psnr 31.97  ok
+        valid    loss   1.2438  bpp 0.4487  psnr  27.69
+ 22,200/50,000  loss   1.1427  bpp 0.5083  psnr  26.80  aux  2577.24  lr 1.00e-04   2.03 it/s  eta  3.80 h  Y/U/V 27.99/36.05/36.00  chroma 25.7%
+ 22,400/50,000  loss   1.1263  bpp 0.5037  psnr  26.80  aux  2346.11  lr 1.00e-04   2.09 it/s  eta  3.66 h  Y/U/V 27.96/35.98/36.03  chroma 25.7%
+ 22,600/50,000  loss   1.1295  bpp 0.5075  psnr  26.77  aux  2148.32  lr 1.00e-04   2.09 it/s  eta  3.64 h  Y/U/V 27.93/35.98/35.86  chroma 25.9%
+ 22,800/50,000  loss   1.1100  bpp 0.4986  psnr  26.82  aux  1937.76  lr 1.00e-04   2.09 it/s  eta  3.61 h  Y/U/V 27.90/36.33/36.22  chroma 25.8%
+ 23,000/50,000  loss   1.1165  bpp 0.5002  psnr  26.80  aux  1768.29  lr 1.00e-04   2.09 it/s  eta  3.59 h  Y/U/V 27.93/36.13/36.38  chroma 25.7%
+ 23,200/50,000  loss   1.1168  bpp 0.5036  psnr  26.82  aux  1627.95  lr 1.00e-04   2.09 it/s  eta  3.56 h  Y/U/V 27.92/36.17/36.26  chroma 25.5%
+ 23,400/50,000  loss   1.1090  bpp 0.5017  psnr  26.82  aux  1494.13  lr 1.00e-04   2.09 it/s  eta  3.53 h  Y/U/V 27.99/36.18/36.00  chroma 25.7%
+ 23,600/50,000  loss   1.1130  bpp 0.5013  psnr  26.88  aux  1378.53  lr 1.00e-04   2.09 it/s  eta  3.51 h  Y/U/V 28.01/36.39/36.12  chroma 25.6%
+ 23,800/50,000  loss   1.1105  bpp 0.5046  psnr  26.86  aux  1266.45  lr 1.00e-04   2.08 it/s  eta  3.49 h  Y/U/V 27.96/36.18/36.19  chroma 25.6%
+ 24,000/50,000  loss   1.1136  bpp 0.5031  psnr  26.80  aux  1152.92  lr 1.00e-04   2.09 it/s  eta  3.46 h  Y/U/V 27.99/35.96/35.89  chroma 25.8%
+        rtcheck  act 0.3855  vs est  -2.24%  vs est_q  -0.50%  (sigma grid -1.74%)  oor y 0.000% z 0.009% (uv y 0.000% z 0.000%)  worst z_uv +15 B (+1.2%)  yhat exact  psnr 31.33  **
+        valid    loss   1.2127  bpp 0.4566  psnr  27.64
+ 24,200/50,000  loss   1.1171  bpp 0.5046  psnr  26.76  aux  1018.82  lr 1.00e-04   2.03 it/s  eta  3.53 h  Y/U/V 27.86/36.28/36.10  chroma 25.8%
+ 24,400/50,000  loss   1.1071  bpp 0.5025  psnr  26.96  aux   911.47  lr 1.00e-04   2.09 it/s  eta  3.40 h  Y/U/V 28.10/36.47/36.09  chroma 25.6%
+ 24,600/50,000  loss   1.1235  bpp 0.5051  psnr  26.86  aux   838.54  lr 1.00e-04   2.09 it/s  eta  3.37 h  Y/U/V 28.07/36.27/35.63  chroma 25.4%
+ 24,800/50,000  loss   1.1043  bpp 0.4997  psnr  26.86  aux   760.92  lr 1.00e-04   2.09 it/s  eta  3.35 h  Y/U/V 27.93/36.30/36.17  chroma 25.8%
+ 25,000/50,000  loss   1.1011  bpp 0.4982  psnr  26.92  aux   696.21  lr 1.00e-04   2.09 it/s  eta  3.32 h  Y/U/V 28.10/36.19/35.97  chroma 25.8%
+ 25,200/50,000  loss   1.0988  bpp 0.4991  psnr  26.95  aux   626.24  lr 1.00e-04   2.09 it/s  eta  3.29 h  Y/U/V 28.02/36.60/36.16  chroma 25.6%
+ 25,400/50,000  loss   1.1188  bpp 0.5039  psnr  26.75  aux   560.76  lr 1.00e-04   2.09 it/s  eta  3.27 h  Y/U/V 27.87/36.12/36.28  chroma 25.4%
+ 25,600/50,000  loss   1.0867  bpp 0.5007  psnr  27.03  aux   494.55  lr 1.00e-04   2.09 it/s  eta  3.24 h  Y/U/V 28.14/36.31/36.46  chroma 25.7%
+ 25,800/50,000  loss   1.1018  bpp 0.4995  psnr  26.75  aux   446.82  lr 1.00e-04   2.09 it/s  eta  3.21 h  Y/U/V 27.91/36.25/35.86  chroma 25.7%
+ 26,000/50,000  loss   1.0947  bpp 0.4988  psnr  27.02  aux   407.25  lr 1.00e-04   2.09 it/s  eta  3.19 h  Y/U/V 28.07/36.64/36.49  chroma 25.3%
+        rtcheck  act 0.3936  vs est  -1.29%  vs est_q  -0.04%  (sigma grid -1.24%)  oor y 0.000% z 0.004% (uv y 0.000% z 0.000%)  worst z_uv +40 B (+1.5%)  yhat exact  psnr 32.69  ok
+        valid    loss   1.1971  bpp 0.4665  psnr  28.12
+ 26,200/50,000  loss   1.0979  bpp 0.5020  psnr  26.87  aux   384.12  lr 1.00e-04   2.03 it/s  eta  3.25 h  Y/U/V 27.92/36.49/36.29  chroma 25.4%
+ 26,400/50,000  loss   1.0852  bpp 0.4974  psnr  27.12  aux   365.09  lr 1.00e-04   2.09 it/s  eta  3.13 h  Y/U/V 28.30/36.36/36.25  chroma 25.8%
+ 26,600/50,000  loss   1.1032  bpp 0.4993  psnr  26.86  aux   344.94  lr 1.00e-04   2.09 it/s  eta  3.11 h  Y/U/V 27.91/36.44/36.32  chroma 25.6%
+ 26,800/50,000  loss   1.0856  bpp 0.5000  psnr  27.08  aux   326.76  lr 1.00e-04   2.09 it/s  eta  3.08 h  Y/U/V 28.21/36.49/36.18  chroma 25.7%
+ 27,000/50,000  loss   1.0778  bpp 0.4951  psnr  27.08  aux   309.94  lr 1.00e-04   2.09 it/s  eta  3.05 h  Y/U/V 28.17/36.65/36.38  chroma 25.5%
+ 27,200/50,000  loss   1.0862  bpp 0.4934  psnr  26.95  aux   295.41  lr 1.00e-04   2.09 it/s  eta  3.03 h  Y/U/V 28.14/36.20/36.16  chroma 25.8%
+ 27,400/50,000  loss   1.1000  bpp 0.4995  psnr  26.95  aux   281.98  lr 1.00e-04   2.09 it/s  eta  3.00 h  Y/U/V 28.08/36.46/36.17  chroma 25.5%
+ 27,600/50,000  loss   1.0955  bpp 0.5032  psnr  26.87  aux   268.76  lr 1.00e-04   2.09 it/s  eta  2.98 h  Y/U/V 27.97/36.45/36.04  chroma 25.5%
+ 27,800/50,000  loss   1.0597  bpp 0.4922  psnr  27.25  aux   256.21  lr 1.00e-04   2.09 it/s  eta  2.95 h  Y/U/V 28.40/36.53/36.44  chroma 25.6%
+ 28,000/50,000  loss   1.0803  bpp 0.4952  psnr  26.98  aux   245.38  lr 1.00e-04   2.09 it/s  eta  2.92 h  Y/U/V 28.13/36.32/36.13  chroma 25.7%
+        rtcheck  act 0.3769  vs est  +0.13%  vs est_q  +0.15%  (sigma grid -0.03%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +18 B (+0.7%)  yhat exact  psnr 32.04  ok
+        valid    loss   1.2063  bpp 0.4586  psnr  27.94
+ 28,200/50,000  loss   1.0660  bpp 0.4938  psnr  27.24  aux   235.29  lr 1.00e-04   2.04 it/s  eta  2.97 h  Y/U/V 28.37/36.56/36.48  chroma 25.8%
+ 28,400/50,000  loss   1.0940  bpp 0.5021  psnr  26.94  aux   222.54  lr 1.00e-04   2.09 it/s  eta  2.87 h  Y/U/V 28.03/36.52/36.31  chroma 25.6%
+ 28,600/50,000  loss   1.0943  bpp 0.5002  psnr  26.80  aux   214.76  lr 1.00e-04   2.09 it/s  eta  2.84 h  Y/U/V 27.81/36.55/36.30  chroma 25.6%
+ 28,800/50,000  loss   1.0580  bpp 0.4924  psnr  27.20  aux   206.17  lr 1.00e-04   2.09 it/s  eta  2.82 h  Y/U/V 28.39/36.34/36.33  chroma 25.6%
+ 29,000/50,000  loss   1.0663  bpp 0.4922  psnr  27.03  aux   200.94  lr 1.00e-04   2.09 it/s  eta  2.79 h  Y/U/V 28.08/36.71/36.48  chroma 25.4%
+ 29,200/50,000  loss   1.0667  bpp 0.4948  psnr  27.17  aux   194.45  lr 1.00e-04   2.09 it/s  eta  2.76 h  Y/U/V 28.34/36.51/36.35  chroma 25.6%
+ 29,400/50,000  loss   1.0761  bpp 0.4975  psnr  27.11  aux   188.03  lr 1.00e-04   2.09 it/s  eta  2.74 h  Y/U/V 28.18/36.41/36.58  chroma 25.6%
+ 29,600/50,000  loss   1.0752  bpp 0.4978  psnr  27.11  aux   183.85  lr 1.00e-04   2.09 it/s  eta  2.71 h  Y/U/V 28.28/36.59/36.21  chroma 25.6%
+ 29,800/50,000  loss   1.0639  bpp 0.4932  psnr  27.10  aux   180.19  lr 1.00e-04   2.09 it/s  eta  2.68 h  Y/U/V 28.19/36.60/36.49  chroma 25.5%
+ 30,000/50,000  loss   1.0612  bpp 0.4941  psnr  27.17  aux   176.27  lr 1.00e-04   2.09 it/s  eta  2.66 h  Y/U/V 28.28/36.66/36.39  chroma 25.7%
+        rtcheck  act 0.3928  vs est  +1.39%  vs est_q  +0.21%  (sigma grid +1.18%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.000%)  worst z +71 B (+2.0%)  yhat exact  psnr 32.54  **
+        valid    loss   1.2007  bpp 0.4765  psnr  28.04
+ 30,200/50,000  loss   1.0894  bpp 0.5001  psnr  26.87  aux   174.05  lr 1.00e-04   2.04 it/s  eta  2.70 h  Y/U/V 27.95/36.44/36.25  chroma 25.5%
+ 30,400/50,000  loss   1.0803  bpp 0.4958  psnr  27.05  aux   174.03  lr 1.00e-04   2.09 it/s  eta  2.60 h  Y/U/V 28.18/36.37/36.31  chroma 25.5%
+ 30,600/50,000  loss   1.0638  bpp 0.4940  psnr  27.17  aux   173.69  lr 1.00e-04   2.09 it/s  eta  2.58 h  Y/U/V 28.35/36.48/36.22  chroma 25.8%
+ 30,800/50,000  loss   1.0864  bpp 0.4982  psnr  26.87  aux   168.86  lr 1.00e-04   2.09 it/s  eta  2.55 h  Y/U/V 27.94/36.27/36.32  chroma 25.4%
+ 31,000/50,000  loss   1.0470  bpp 0.4898  psnr  27.28  aux   168.16  lr 1.00e-04   2.09 it/s  eta  2.52 h  Y/U/V 28.30/36.95/36.82  chroma 25.3%
+ 31,200/50,000  loss   1.0812  bpp 0.4952  psnr  26.98  aux   166.29  lr 1.00e-04   2.09 it/s  eta  2.50 h  Y/U/V 28.08/36.54/36.24  chroma 25.5%
+ 31,400/50,000  loss   1.0618  bpp 0.4919  psnr  27.18  aux   167.83  lr 1.00e-04   2.09 it/s  eta  2.47 h  Y/U/V 28.18/36.91/36.76  chroma 25.5%
+ 31,600/50,000  loss   1.0629  bpp 0.4931  psnr  27.23  aux   166.65  lr 1.00e-04   2.09 it/s  eta  2.44 h  Y/U/V 28.31/36.65/36.55  chroma 25.6%
+ 31,800/50,000  loss   1.0561  bpp 0.4922  psnr  27.04  aux   163.38  lr 1.00e-04   2.09 it/s  eta  2.42 h  Y/U/V 28.19/36.58/36.18  chroma 25.7%
+ 32,000/50,000  loss   1.0706  bpp 0.4980  psnr  27.00  aux   164.02  lr 1.00e-04   2.09 it/s  eta  2.39 h  Y/U/V 28.10/36.64/36.09  chroma 25.5%
+        rtcheck  act 0.4339  vs est  +1.93%  vs est_q  -0.49%  (sigma grid +2.44%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +82 B (+2.5%)  yhat exact  psnr 30.75  **
+        valid    loss   1.2156  bpp 0.4990  psnr  27.50
+ 32,200/50,000  loss   1.0517  bpp 0.4903  psnr  27.20  aux   163.38  lr 1.00e-04   2.04 it/s  eta  2.43 h  Y/U/V 28.27/36.69/36.51  chroma 25.3%
+ 32,400/50,000  loss   1.0422  bpp 0.4923  psnr  27.37  aux   163.99  lr 1.00e-04   2.09 it/s  eta  2.34 h  Y/U/V 28.47/36.87/36.58  chroma 25.5%
+ 32,600/50,000  loss   1.0661  bpp 0.4955  psnr  27.00  aux   163.84  lr 1.00e-04   2.09 it/s  eta  2.31 h  Y/U/V 28.12/36.44/36.23  chroma 25.5%
+ 32,800/50,000  loss   1.0643  bpp 0.4968  psnr  27.08  aux   164.25  lr 1.00e-04   2.10 it/s  eta  2.28 h  Y/U/V 28.19/36.47/36.44  chroma 25.4%
+ 33,000/50,000  loss   1.0705  bpp 0.5003  psnr  27.11  aux   164.02  lr 1.00e-04   2.09 it/s  eta  2.26 h  Y/U/V 28.15/36.65/36.51  chroma 25.2%
+ 33,200/50,000  loss   1.0443  bpp 0.4908  psnr  27.19  aux   162.91  lr 1.00e-04   2.09 it/s  eta  2.23 h  Y/U/V 28.32/36.67/36.32  chroma 25.3%
+ 33,400/50,000  loss   1.0371  bpp 0.4869  psnr  27.32  aux   162.91  lr 1.00e-04   2.09 it/s  eta  2.20 h  Y/U/V 28.40/36.96/36.68  chroma 25.5%
+ 33,600/50,000  loss   1.0518  bpp 0.4961  psnr  27.09  aux   164.52  lr 1.00e-04   2.09 it/s  eta  2.18 h  Y/U/V 28.27/36.41/36.11  chroma 25.8%
+ 33,800/50,000  loss   1.0483  bpp 0.4936  psnr  27.20  aux   161.45  lr 1.00e-04   2.09 it/s  eta  2.15 h  Y/U/V 28.29/36.66/36.49  chroma 25.2%
+ 34,000/50,000  loss   1.0506  bpp 0.4930  psnr  27.25  aux   161.37  lr 1.00e-04   2.09 it/s  eta  2.13 h  Y/U/V 28.35/36.83/36.56  chroma 25.0%
+        rtcheck  act 0.4234  vs est  +1.32%  vs est_q  -0.64%  (sigma grid +1.98%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +75 B (+2.2%)  yhat exact  psnr 32.89  **
+        valid    loss   1.2150  bpp 0.5171  psnr  28.23
+ 34,200/50,000  loss   1.0387  bpp 0.4913  psnr  27.38  aux   162.98  lr 1.00e-04   2.03 it/s  eta  2.16 h  Y/U/V 28.50/36.81/36.76  chroma 25.9%
+ 34,400/50,000  loss   1.0565  bpp 0.4918  psnr  27.09  aux   160.92  lr 1.00e-04   2.09 it/s  eta  2.08 h  Y/U/V 28.14/36.54/36.61  chroma 25.4%
+ 34,600/50,000  loss   1.0665  bpp 0.4963  psnr  27.03  aux   160.44  lr 1.00e-04   2.09 it/s  eta  2.05 h  Y/U/V 28.06/36.54/36.61  chroma 25.1%
+ 34,800/50,000  loss   1.0488  bpp 0.4934  psnr  27.26  aux   161.62  lr 1.00e-04   2.09 it/s  eta  2.02 h  Y/U/V 28.38/36.64/36.37  chroma 25.5%
+ 35,000/50,000  loss   1.0380  bpp 0.4897  psnr  27.28  aux   161.06  lr 1.00e-04   2.09 it/s  eta  1.99 h  Y/U/V 28.41/36.80/36.47  chroma 25.4%
+ 35,200/50,000  loss   1.0369  bpp 0.4900  psnr  27.23  aux   161.07  lr 1.00e-04   2.09 it/s  eta  1.97 h  Y/U/V 28.37/36.76/36.42  chroma 25.3%
+ 35,400/50,000  loss   1.0520  bpp 0.4921  psnr  27.20  aux   160.73  lr 1.00e-04   2.07 it/s  eta  1.96 h  Y/U/V 28.36/36.36/36.39  chroma 25.3%
+ 35,600/50,000  loss   1.0377  bpp 0.4887  psnr  27.18  aux   161.24  lr 1.00e-04   2.08 it/s  eta  1.92 h  Y/U/V 28.27/36.76/36.70  chroma 25.6%
+ 35,800/50,000  loss   1.0503  bpp 0.4930  psnr  27.24  aux   160.64  lr 1.00e-04   2.10 it/s  eta  1.88 h  Y/U/V 28.31/36.94/36.68  chroma 25.3%
+ 36,000/50,000  loss   1.0394  bpp 0.4912  psnr  27.31  aux   160.72  lr 1.00e-04   2.10 it/s  eta  1.86 h  Y/U/V 28.39/36.77/36.78  chroma 25.1%
+        rtcheck  act 0.4212  vs est  +1.38%  vs est_q  -1.00%  (sigma grid +2.41%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +31 B (+1.2%)  yhat exact  psnr 33.22  **
+        valid    loss   1.1899  bpp 0.5041  psnr  28.61
+ 36,200/50,000  loss   1.0525  bpp 0.4924  psnr  27.18  aux   161.12  lr 1.00e-04   2.04 it/s  eta  1.88 h  Y/U/V 28.24/36.86/36.53  chroma 25.5%
+ 36,400/50,000  loss   1.0514  bpp 0.4946  psnr  27.16  aux   159.94  lr 1.00e-04   2.10 it/s  eta  1.80 h  Y/U/V 28.24/36.66/36.39  chroma 25.3%
+ 36,600/50,000  loss   1.0331  bpp 0.4891  psnr  27.34  aux   162.66  lr 1.00e-04   2.10 it/s  eta  1.78 h  Y/U/V 28.39/36.85/36.95  chroma 25.1%
+ 36,800/50,000  loss   1.0409  bpp 0.4887  psnr  27.20  aux   158.65  lr 1.00e-04   2.10 it/s  eta  1.75 h  Y/U/V 28.35/36.70/36.27  chroma 25.3%
+ 37,000/50,000  loss   1.0275  bpp 0.4907  psnr  27.33  aux   160.71  lr 1.00e-04   2.09 it/s  eta  1.72 h  Y/U/V 28.48/36.78/36.60  chroma 25.3%
+ 37,200/50,000  loss   1.0315  bpp 0.4902  psnr  27.50  aux   158.35  lr 1.00e-04   2.08 it/s  eta  1.71 h  Y/U/V 28.61/36.97/36.77  chroma 25.3%
+ 37,400/50,000  loss   1.0699  bpp 0.4955  psnr  26.95  aux   157.60  lr 1.00e-04   2.04 it/s  eta  1.71 h  Y/U/V 27.96/36.68/36.58  chroma 24.9%
+ 37,600/50,000  loss   1.0337  bpp 0.4869  psnr  27.17  aux   156.15  lr 1.00e-04   1.99 it/s  eta  1.73 h  Y/U/V 28.24/36.83/36.75  chroma 25.4%
+ 37,800/50,000  loss   1.0419  bpp 0.4924  psnr  27.19  aux   156.75  lr 1.00e-04   1.99 it/s  eta  1.70 h  Y/U/V 28.21/36.90/36.84  chroma 24.9%
+ 38,000/50,000  loss   1.0548  bpp 0.4932  psnr  27.14  aux   154.40  lr 1.00e-04   1.99 it/s  eta  1.68 h  Y/U/V 28.28/36.60/36.35  chroma 25.4%
+        rtcheck  act 0.4601  vs est  +2.12%  vs est_q  -1.29%  (sigma grid +3.45%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +69 B (+1.7%)  yhat exact  psnr 31.71  **
+        valid    loss   1.2493  bpp 0.5481  psnr  27.70
+ 38,200/50,000  loss   1.0326  bpp 0.4888  psnr  27.38  aux   154.81  lr 1.00e-04   1.94 it/s  eta  1.69 h  Y/U/V 28.41/36.91/36.95  chroma 25.1%
+ 38,400/50,000  loss   1.0256  bpp 0.4883  psnr  27.37  aux   155.21  lr 1.00e-04   1.97 it/s  eta  1.63 h  Y/U/V 28.46/36.82/36.71  chroma 25.5%
+ 38,600/50,000  loss   1.0315  bpp 0.4903  psnr  27.31  aux   153.91  lr 1.00e-04   1.98 it/s  eta  1.60 h  Y/U/V 28.43/36.65/36.82  chroma 25.1%
+ 38,800/50,000  loss   1.0283  bpp 0.4893  psnr  27.35  aux   153.51  lr 1.00e-04   1.98 it/s  eta  1.57 h  Y/U/V 28.43/36.88/36.63  chroma 25.3%
+ 39,000/50,000  loss   1.0473  bpp 0.4909  psnr  27.22  aux   154.95  lr 1.00e-04   1.98 it/s  eta  1.54 h  Y/U/V 28.34/36.69/36.49  chroma 25.3%
+ 39,200/50,000  loss   1.0329  bpp 0.4900  psnr  27.35  aux   153.54  lr 1.00e-04   2.01 it/s  eta  1.49 h  Y/U/V 28.40/36.89/36.87  chroma 25.2%
+ 39,400/50,000  loss   1.0470  bpp 0.4934  psnr  27.20  aux   152.28  lr 1.00e-04   2.09 it/s  eta  1.41 h  Y/U/V 28.31/36.57/36.51  chroma 25.3%
+ 39,600/50,000  loss   1.0164  bpp 0.4852  psnr  27.46  aux   152.34  lr 1.00e-04   2.07 it/s  eta  1.40 h  Y/U/V 28.48/37.29/36.97  chroma 25.1%
+ 39,800/50,000  loss   1.0392  bpp 0.4898  psnr  27.27  aux   149.83  lr 1.00e-04   2.08 it/s  eta  1.36 h  Y/U/V 28.35/36.85/36.60  chroma 25.1%
+ 40,000/50,000  loss   1.0332  bpp 0.4917  psnr  27.25  aux   149.51  lr 1.00e-04   2.08 it/s  eta  1.34 h  Y/U/V 28.33/36.63/36.61  chroma 25.3%
+        rtcheck  act 0.4368  vs est  +0.79%  vs est_q  -2.06%  (sigma grid +2.91%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  worst z +31 B (+1.1%)  yhat exact  psnr 33.16  **
+        valid    loss   1.2201  bpp 0.5419  psnr  28.61
+ 40,200/50,000  loss   1.0164  bpp 0.4883  psnr  27.58  aux   145.68  lr 1.00e-04   2.03 it/s  eta  1.34 h  Y/U/V 28.67/36.90/36.90  chroma 25.3%
+ 40,400/50,000  loss   1.0400  bpp 0.4908  psnr  27.23  aux   145.88  lr 1.00e-04   2.08 it/s  eta  1.28 h  Y/U/V 28.27/36.78/36.97  chroma 25.2%
+ 40,600/50,000  loss   1.0464  bpp 0.4952  psnr  27.14  aux   145.89  lr 1.00e-04   2.08 it/s  eta  1.25 h  Y/U/V 28.13/36.95/36.75  chroma 24.8%
+ 40,800/50,000  loss   1.0179  bpp 0.4855  psnr  27.28  aux   144.32  lr 1.00e-04   2.08 it/s  eta  1.23 h  Y/U/V 28.48/36.62/36.38  chroma 25.3%
+ 41,000/50,000  loss   1.0365  bpp 0.4919  psnr  27.24  aux   145.10  lr 1.00e-04   2.02 it/s  eta  1.24 h  Y/U/V 28.34/36.58/36.52  chroma 25.2%
+ 41,200/50,000  loss   1.0265  bpp 0.4879  psnr  27.37  aux   141.48  lr 1.00e-04   2.08 it/s  eta  1.18 h  Y/U/V 28.40/37.04/36.97  chroma 24.9%
+ 41,400/50,000  loss   1.0307  bpp 0.4897  psnr  27.30  aux   138.02  lr 1.00e-04   2.05 it/s  eta  1.17 h  Y/U/V 28.44/36.68/36.64  chroma 25.4%
+ 41,600/50,000  loss   1.0243  bpp 0.4884  psnr  27.36  aux   136.78  lr 1.00e-04   2.04 it/s  eta  1.14 h  Y/U/V 28.46/36.89/36.66  chroma 25.0%
+ 41,800/50,000  loss   1.0297  bpp 0.4870  psnr  27.28  aux   134.73  lr 1.00e-04   1.99 it/s  eta  1.15 h  Y/U/V 28.34/36.77/36.67  chroma 25.4%
+ 42,000/50,000  loss   1.0247  bpp 0.4899  psnr  27.40  aux   134.60  lr 1.00e-04   2.00 it/s  eta  1.11 h  Y/U/V 28.46/36.98/36.90  chroma 24.9%
+        rtcheck  act 0.4402  vs est  +1.08%  vs est_q  -2.31%  (sigma grid +3.47%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.340%)  worst z +33 B (+1.0%)  yhat exact  psnr 33.13  **
+        valid    loss   1.2036  bpp 0.5282  psnr  28.51
+ 42,200/50,000  loss   1.0417  bpp 0.4925  psnr  27.25  aux   134.30  lr 1.00e-04   1.96 it/s  eta  1.11 h  Y/U/V 28.27/36.93/36.77  chroma 25.1%
+ 42,400/50,000  loss   1.0094  bpp 0.4849  psnr  27.55  aux   131.88  lr 1.00e-04   2.09 it/s  eta  1.01 h  Y/U/V 28.67/36.90/36.91  chroma 25.3%
+ 42,600/50,000  loss   1.0280  bpp 0.4874  psnr  27.35  aux   133.34  lr 1.00e-04   2.09 it/s  eta  0.99 h  Y/U/V 28.38/36.97/36.85  chroma 25.3%
+ 42,800/50,000  loss   1.0306  bpp 0.4915  psnr  27.34  aux   130.38  lr 1.00e-04   2.09 it/s  eta  0.96 h  Y/U/V 28.41/36.85/36.92  chroma 25.0%
+ 43,000/50,000  loss   1.0086  bpp 0.4862  psnr  27.56  aux   127.35  lr 1.00e-04   2.09 it/s  eta  0.93 h  Y/U/V 28.66/36.87/37.01  chroma 25.2%
+ 43,200/50,000  loss   1.0327  bpp 0.4923  psnr  27.30  aux   124.81  lr 1.00e-04   2.08 it/s  eta  0.91 h  Y/U/V 28.41/36.75/36.58  chroma 25.2%
+ 43,400/50,000  loss   1.0188  bpp 0.4886  psnr  27.43  aux   123.69  lr 1.00e-04   2.08 it/s  eta  0.88 h  Y/U/V 28.50/36.95/36.80  chroma 25.2%
+ 43,600/50,000  loss   1.0062  bpp 0.4854  psnr  27.49  aux   121.77  lr 1.00e-04   2.08 it/s  eta  0.86 h  Y/U/V 28.61/36.79/37.04  chroma 25.1%
+ 43,800/50,000  loss   1.0423  bpp 0.4938  psnr  27.16  aux   123.04  lr 1.00e-04   2.08 it/s  eta  0.83 h  Y/U/V 28.20/36.71/36.81  chroma 25.0%
+ 44,000/50,000  loss   1.0207  bpp 0.4870  psnr  27.45  aux   118.97  lr 1.00e-04   2.06 it/s  eta  0.81 h  Y/U/V 28.51/36.90/36.87  chroma 25.2%
+        rtcheck  act 0.4421  vs est  +0.77%  vs est_q  -2.61%  (sigma grid +3.47%)  oor y 0.000% z 0.013% (uv y 0.000% z 0.268%)  worst z +16 B (+0.5%)  yhat exact  psnr 32.97  **
+        valid    loss   1.2053  bpp 0.5402  psnr  28.50
+ 44,200/50,000  loss   1.0316  bpp 0.4942  psnr  27.42  aux   117.72  lr 1.00e-04   2.01 it/s  eta  0.80 h  Y/U/V 28.48/36.95/36.72  chroma 25.1%
+ 44,400/50,000  loss   1.0199  bpp 0.4861  psnr  27.37  aux   116.63  lr 1.00e-04   2.08 it/s  eta  0.75 h  Y/U/V 28.40/36.94/37.09  chroma 25.1%
+ 44,600/50,000  loss   1.0210  bpp 0.4893  psnr  27.44  aux   118.40  lr 1.00e-04   2.04 it/s  eta  0.73 h  Y/U/V 28.47/37.16/36.82  chroma 25.1%
+ 44,800/50,000  loss   1.0231  bpp 0.4898  psnr  27.38  aux   112.42  lr 1.00e-04   2.08 it/s  eta  0.70 h  Y/U/V 28.46/36.78/37.05  chroma 25.1%
+ 45,000/50,000  loss   1.0264  bpp 0.4902  psnr  27.38  aux   111.02  lr 1.00e-04   1.99 it/s  eta  0.70 h  Y/U/V 28.49/36.72/36.87  chroma 25.1%
+ 45,200/50,000  loss   1.0228  bpp 0.4874  psnr  27.28  aux   109.07  lr 9.96e-05   1.99 it/s  eta  0.67 h  Y/U/V 28.36/36.66/36.71  chroma 25.1%
+ 45,400/50,000  loss   1.0149  bpp 0.4915  psnr  27.51  aux   107.77  lr 9.86e-05   2.01 it/s  eta  0.64 h  Y/U/V 28.66/36.93/36.78  chroma 25.0%
+ 45,600/50,000  loss   1.0147  bpp 0.4890  psnr  27.42  aux   111.29  lr 9.69e-05   2.01 it/s  eta  0.61 h  Y/U/V 28.44/37.15/37.08  chroma 25.0%
+ 45,800/50,000  loss   1.0295  bpp 0.4923  psnr  27.41  aux   107.09  lr 9.44e-05   2.05 it/s  eta  0.57 h  Y/U/V 28.42/37.07/37.02  chroma 25.1%
+ 46,000/50,000  loss   0.9911  bpp 0.4878  psnr  27.66  aux   104.28  lr 9.14e-05   2.00 it/s  eta  0.55 h  Y/U/V 28.76/37.13/36.97  chroma 25.0%
+        rtcheck  act 0.4309  vs est  +0.44%  vs est_q  -2.55%  (sigma grid +3.07%)  oor y 0.000% z 0.100% (uv y 0.000% z 0.282%)  worst z +32 B (+1.2%)  yhat exact  psnr 33.12  **
+        valid    loss   1.1821  bpp 0.5230  psnr  28.50
+ 46,200/50,000  loss   1.0205  bpp 0.4908  psnr  27.37  aux   105.68  lr 8.78e-05   1.97 it/s  eta  0.53 h  Y/U/V 28.45/36.81/36.73  chroma 25.0%
+ 46,400/50,000  loss   1.0081  bpp 0.4887  psnr  27.51  aux    99.37  lr 8.37e-05   2.00 it/s  eta  0.50 h  Y/U/V 28.49/37.36/37.29  chroma 24.7%
+ 46,600/50,000  loss   1.0123  bpp 0.4917  psnr  27.44  aux   100.06  lr 7.91e-05   1.99 it/s  eta  0.47 h  Y/U/V 28.45/37.11/37.11  chroma 25.0%
+ 46,800/50,000  loss   1.0308  bpp 0.4992  psnr  27.45  aux   102.36  lr 7.42e-05   2.00 it/s  eta  0.44 h  Y/U/V 28.53/36.84/36.91  chroma 25.0%
+ 47,000/50,000  loss   0.9964  bpp 0.4880  psnr  27.60  aux    92.47  lr 6.89e-05   2.01 it/s  eta  0.41 h  Y/U/V 28.60/37.38/37.21  chroma 25.0%
+ 47,200/50,000  loss   0.9843  bpp 0.4840  psnr  27.65  aux    90.26  lr 6.35e-05   2.03 it/s  eta  0.38 h  Y/U/V 28.61/37.51/37.36  chroma 24.9%
+ 47,400/50,000  loss   1.0013  bpp 0.4932  psnr  27.52  aux    90.53  lr 5.79e-05   2.01 it/s  eta  0.36 h  Y/U/V 28.52/37.08/37.15  chroma 24.9%
+ 47,600/50,000  loss   1.0025  bpp 0.4933  psnr  27.60  aux    88.25  lr 5.22e-05   2.02 it/s  eta  0.33 h  Y/U/V 28.62/37.29/37.15  chroma 24.8%
+ 47,800/50,000  loss   0.9702  bpp 0.4842  psnr  27.78  aux    84.34  lr 4.66e-05   2.02 it/s  eta  0.30 h  Y/U/V 28.73/37.70/37.59  chroma 24.8%
+ 48,000/50,000  loss   0.9855  bpp 0.4906  psnr  27.76  aux    83.96  lr 4.11e-05   2.02 it/s  eta  0.28 h  Y/U/V 28.74/37.66/37.46  chroma 24.8%
+        rtcheck  act 0.4443  vs est  +0.12%  vs est_q  -3.12%  (sigma grid +3.35%)  oor y 0.000% z 0.178% (uv y 0.000% z 0.405%)  worst y_uv +15 B (+0.3%)  yhat exact  psnr 33.34  **
+        valid    loss   1.1567  bpp 0.5320  psnr  28.86
+ 48,200/50,000  loss   0.9792  bpp 0.4901  psnr  27.67  aux    81.95  lr 3.59e-05   1.96 it/s  eta  0.25 h  Y/U/V 28.62/37.48/37.52  chroma 24.8%
+ 48,400/50,000  loss   0.9655  bpp 0.4866  psnr  28.00  aux    80.40  lr 3.09e-05   2.02 it/s  eta  0.22 h  Y/U/V 28.97/37.81/37.75  chroma 25.0%
+ 48,600/50,000  loss   0.9946  bpp 0.4938  psnr  27.67  aux    79.06  lr 2.63e-05   2.02 it/s  eta  0.19 h  Y/U/V 28.63/37.38/37.57  chroma 24.7%
+ 48,800/50,000  loss   0.9756  bpp 0.4927  psnr  27.83  aux    77.36  lr 2.22e-05   2.01 it/s  eta  0.17 h  Y/U/V 28.77/37.84/37.74  chroma 24.5%
+ 49,000/50,000  loss   0.9809  bpp 0.4924  psnr  27.81  aux    75.71  lr 1.86e-05   2.02 it/s  eta  0.14 h  Y/U/V 28.71/37.89/37.92  chroma 24.4%
+ 49,200/50,000  loss   0.9760  bpp 0.4915  psnr  27.78  aux    74.12  lr 1.56e-05   2.01 it/s  eta  0.11 h  Y/U/V 28.71/37.69/37.64  chroma 24.9%
+ 49,400/50,000  loss   0.9710  bpp 0.4899  psnr  27.89  aux    72.71  lr 1.32e-05   2.02 it/s  eta  0.08 h  Y/U/V 28.84/37.73/37.67  chroma 24.9%
+ 49,600/50,000  loss   0.9562  bpp 0.4901  psnr  28.00  aux    71.23  lr 1.14e-05   2.01 it/s  eta  0.06 h  Y/U/V 28.94/37.90/37.94  chroma 24.7%
+ 49,800/50,000  loss   0.9686  bpp 0.4926  psnr  27.78  aux    69.47  lr 1.04e-05   2.01 it/s  eta  0.03 h  Y/U/V 28.72/37.65/37.64  chroma 24.8%
+ 50,000/50,000  loss   0.9650  bpp 0.4895  psnr  27.88  aux    67.95  lr 1.00e-05   2.02 it/s  eta  0.00 h  Y/U/V 28.79/37.87/37.89  chroma 24.7%
+        rtcheck  act 0.4417  vs est  +0.03%  vs est_q  -3.30%  (sigma grid +3.44%)  oor y 0.000% z 0.161% (uv y 0.000% z 0.731%)  worst y_uv +15 B (+0.3%)  yhat exact  psnr 33.63  **
+        valid    loss   1.1398  bpp 0.5353  psnr  29.03
+
+final    bpp 0.5353  psnr 29.03
+gate     actual 0.4417 bpp
+         vs estimate with quantised sigma: -3.30%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +0.03%   (of which +3.44% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.161%
+         per stream (bytes vs that stream's own estimate): y +0.04% (+7.4 B)  y_uv +0.34% (+15.0 B)  z -2.46% (-80.1 B)  z_uv -19.03% (-1052.0 B)
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_p5/beta0.002/final.pt
+[2/5] beta 0.012 (lambda*255^2 = 780)  warm start
+----------------------------------------------------------------------
+resumed warmstart.pt at step 0
+
+run      ladder_p5/beta0.012
+device   mps (Apple Metal)
+beta     0.012  (== compressai lambda*255^2 780)
+steps    0 -> 50,000   batch 8  crop 256
+out      checkpoints/ladder_p5/beta0.012
+
+TwoBranchCodec  internal 420  split-hyper  luma=160/160  chroma=96/96  concat=256
+  part                    params   kMAC/pxl
+  g_a_y                2,051,840       47.8
+  g_s_y                2,180,513      254.0
+  h_a_y                1,152,800        1.5
+  h_s_y                2,075,040        1.4
+  g_a_uv               1,241,248       14.6
+  g_s_uv               1,801,954       66.4
+  h_a_uv                 415,200        0.5
+  h_s_uv                 747,360        0.5
+  eb_y                     9,760           
+  eb_uv                    5,856           
+  h_scale_y              642,720        0.2
+  h_scale_uv             232,032        0.1
+  TOTAL               12,556,323      386.8   (47.9 MiB fp32)
+  decoder                             322.4   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables               209.5 KiB
+
+    200/50,000  loss   3.2494  bpp 0.5375  psnr  28.02  aux    66.81  lr 2.00e-05   1.97 it/s  eta  7.03 h  Y/U/V 28.95/38.06/37.89  chroma 24.1%
+    400/50,000  loss   3.1704  bpp 0.6021  psnr  28.14  aux    65.61  lr 4.00e-05   2.02 it/s  eta  6.83 h  Y/U/V 29.08/38.05/38.03  chroma 23.0%
+    600/50,000  loss   3.1842  bpp 0.6316  psnr  28.07  aux    66.98  lr 6.00e-05   2.01 it/s  eta  6.81 h  Y/U/V 29.06/37.76/37.90  chroma 23.0%
+    800/50,000  loss   3.2586  bpp 0.6484  psnr  27.96  aux    67.97  lr 8.00e-05   2.04 it/s  eta  6.70 h  Y/U/V 29.01/37.56/37.46  chroma 23.4%
+  1,000/50,000  loss   3.2485  bpp 0.6618  psnr  27.92  aux    74.17  lr 1.00e-04   2.07 it/s  eta  6.56 h  Y/U/V 29.04/37.41/37.29  chroma 23.3%
+  1,200/50,000  loss   3.3079  bpp 0.6828  psnr  27.91  aux    79.83  lr 1.00e-04   2.06 it/s  eta  6.59 h  Y/U/V 28.93/37.70/37.46  chroma 23.0%
+  1,400/50,000  loss   3.1710  bpp 0.6802  psnr  28.13  aux    77.37  lr 1.00e-04   2.06 it/s  eta  6.54 h  Y/U/V 29.26/37.57/37.57  chroma 23.6%
+  1,600/50,000  loss   3.2676  bpp 0.6959  psnr  27.89  aux    77.59  lr 1.00e-04   2.06 it/s  eta  6.52 h  Y/U/V 29.04/37.26/37.24  chroma 23.2%
+  1,800/50,000  loss   3.2285  bpp 0.6979  psnr  28.00  aux    76.58  lr 1.00e-04   2.07 it/s  eta  6.45 h  Y/U/V 29.19/37.25/36.99  chroma 23.2%
+  2,000/50,000  loss   3.1834  bpp 0.7018  psnr  28.09  aux    78.48  lr 1.00e-04   2.09 it/s  eta  6.39 h  Y/U/V 29.18/37.68/37.62  chroma 23.3%
+        rtcheck  act 0.6858  vs est  +1.19%  vs est_q  -2.47%  (sigma grid +3.75%)  oor y 0.000% z 0.113% (uv y 0.000% z 0.398%)  worst y_uv +11 B (+0.1%)  yhat exact  psnr 33.33  **
+        valid    loss   4.1390  bpp 0.7518  psnr  28.57
+  2,200/50,000  loss   3.2697  bpp 0.7202  psnr  27.81  aux    75.12  lr 1.00e-04   2.03 it/s  eta  6.54 h  Y/U/V 28.92/37.39/37.31  chroma 23.1%
+  2,400/50,000  loss   3.1243  bpp 0.7152  psnr  28.24  aux    71.20  lr 1.00e-04   2.05 it/s  eta  6.45 h  Y/U/V 29.41/37.60/37.42  chroma 23.0%
+  2,600/50,000  loss   3.1226  bpp 0.7185  psnr  28.18  aux    74.02  lr 1.00e-04   2.05 it/s  eta  6.43 h  Y/U/V 29.32/37.58/37.51  chroma 23.1%
+  2,800/50,000  loss   3.1291  bpp 0.7185  psnr  28.08  aux    67.08  lr 1.00e-04   2.06 it/s  eta  6.37 h  Y/U/V 29.19/37.64/37.38  chroma 23.1%
+  3,000/50,000  loss   3.1181  bpp 0.7213  psnr  28.18  aux    68.54  lr 1.00e-04   2.08 it/s  eta  6.29 h  Y/U/V 29.23/37.84/37.78  chroma 23.0%
+  3,200/50,000  loss   3.2160  bpp 0.7429  psnr  28.03  aux    69.43  lr 1.00e-04   2.10 it/s  eta  6.19 h  Y/U/V 29.26/37.18/37.12  chroma 23.1%
+  3,400/50,000  loss   3.1675  bpp 0.7464  psnr  28.13  aux    71.98  lr 1.00e-04   2.09 it/s  eta  6.19 h  Y/U/V 29.20/37.80/37.70  chroma 22.6%
+  3,600/50,000  loss   3.0975  bpp 0.7449  psnr  28.15  aux    67.88  lr 1.00e-04   2.10 it/s  eta  6.15 h  Y/U/V 29.24/37.69/37.64  chroma 22.7%
+  3,800/50,000  loss   3.1615  bpp 0.7443  psnr  27.99  aux    68.33  lr 1.00e-04   2.08 it/s  eta  6.18 h  Y/U/V 29.37/37.00/36.81  chroma 23.2%
+  4,000/50,000  loss   2.9875  bpp 0.7437  psnr  28.51  aux    70.38  lr 1.00e-04   2.10 it/s  eta  6.09 h  Y/U/V 29.73/37.81/37.73  chroma 23.1%
+        rtcheck  act 0.7122  vs est  +1.31%  vs est_q  -2.06%  (sigma grid +3.44%)  oor y 0.000% z 0.030% (uv y 0.000% z 0.109%)  worst z +23 B (+0.5%)  yhat exact  psnr 34.21  **
+        valid    loss   4.0015  bpp 0.8271  psnr  29.28
+  4,200/50,000  loss   3.0909  bpp 0.7585  psnr  28.26  aux    72.42  lr 1.00e-04   2.01 it/s  eta  6.32 h  Y/U/V 29.41/37.73/37.54  chroma 22.9%
+  4,400/50,000  loss   3.1242  bpp 0.7513  psnr  28.08  aux    67.30  lr 1.00e-04   2.05 it/s  eta  6.17 h  Y/U/V 29.23/37.50/37.47  chroma 22.9%
+  4,600/50,000  loss   3.1038  bpp 0.7547  psnr  28.08  aux    65.69  lr 1.00e-04   2.08 it/s  eta  6.05 h  Y/U/V 29.24/37.50/37.43  chroma 22.7%
+  4,800/50,000  loss   2.9869  bpp 0.7543  psnr  28.55  aux    69.22  lr 1.00e-04   2.07 it/s  eta  6.05 h  Y/U/V 29.81/37.64/37.77  chroma 22.9%
+  5,000/50,000  loss   3.1535  bpp 0.7724  psnr  28.06  aux    68.52  lr 1.00e-04   2.07 it/s  eta  6.03 h  Y/U/V 29.16/37.54/37.59  chroma 22.7%
+  5,200/50,000  loss   2.9827  bpp 0.7560  psnr  28.43  aux    62.48  lr 1.00e-04   2.07 it/s  eta  6.00 h  Y/U/V 29.60/37.75/37.70  chroma 22.9%
+  5,400/50,000  loss   3.0226  bpp 0.7623  psnr  28.34  aux    64.04  lr 1.00e-04   2.07 it/s  eta  5.97 h  Y/U/V 29.61/37.41/37.29  chroma 23.1%
+  5,600/50,000  loss   2.9514  bpp 0.7579  psnr  28.63  aux    67.82  lr 1.00e-04   2.09 it/s  eta  5.91 h  Y/U/V 29.77/38.15/37.94  chroma 22.8%
+  5,800/50,000  loss   3.0507  bpp 0.7682  psnr  28.24  aux    64.42  lr 1.00e-04   2.08 it/s  eta  5.91 h  Y/U/V 29.48/37.26/37.37  chroma 23.2%
+  6,000/50,000  loss   3.0044  bpp 0.7659  psnr  28.48  aux    67.98  lr 1.00e-04   2.09 it/s  eta  5.85 h  Y/U/V 29.63/37.91/37.72  chroma 22.8%
+        rtcheck  act 0.6750  vs est  +0.47%  vs est_q  -1.58%  (sigma grid +2.08%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.072%)  worst z +50 B (+1.7%)  yhat exact  psnr 34.60  **
+        valid    loss   3.8655  bpp 0.7956  psnr  29.67
+  6,200/50,000  loss   3.0163  bpp 0.7788  psnr  28.44  aux    73.38  lr 1.00e-04   2.03 it/s  eta  6.00 h  Y/U/V 29.59/37.78/37.80  chroma 22.7%
+  6,400/50,000  loss   2.9928  bpp 0.7759  psnr  28.43  aux    68.30  lr 1.00e-04   2.09 it/s  eta  5.80 h  Y/U/V 29.59/38.01/37.66  chroma 22.8%
+  6,600/50,000  loss   3.0636  bpp 0.7760  psnr  28.22  aux    64.55  lr 1.00e-04   2.09 it/s  eta  5.78 h  Y/U/V 29.33/37.65/37.65  chroma 22.8%
+  6,800/50,000  loss   2.9185  bpp 0.7699  psnr  28.65  aux    64.46  lr 1.00e-04   2.09 it/s  eta  5.75 h  Y/U/V 29.80/38.15/37.99  chroma 22.9%
+  7,000/50,000  loss   2.9672  bpp 0.7788  psnr  28.42  aux    59.77  lr 1.00e-04   2.09 it/s  eta  5.72 h  Y/U/V 29.57/37.71/37.91  chroma 22.9%
+  7,200/50,000  loss   2.9813  bpp 0.7767  psnr  28.43  aux    63.44  lr 1.00e-04   2.09 it/s  eta  5.69 h  Y/U/V 29.63/37.75/37.41  chroma 23.1%
+  7,400/50,000  loss   2.9568  bpp 0.7818  psnr  28.53  aux    66.45  lr 1.00e-04   2.09 it/s  eta  5.67 h  Y/U/V 29.66/38.09/37.91  chroma 22.7%
+  7,600/50,000  loss   2.9175  bpp 0.7769  psnr  28.57  aux    62.14  lr 1.00e-04   2.09 it/s  eta  5.64 h  Y/U/V 29.83/37.85/37.58  chroma 23.2%
+  7,800/50,000  loss   2.9735  bpp 0.7749  psnr  28.31  aux    61.50  lr 1.00e-04   2.09 it/s  eta  5.61 h  Y/U/V 29.56/37.54/37.27  chroma 22.9%
+  8,000/50,000  loss   2.9950  bpp 0.7939  psnr  28.30  aux    67.16  lr 1.00e-04   2.09 it/s  eta  5.59 h  Y/U/V 29.50/37.57/37.56  chroma 23.0%
+        rtcheck  act 0.7301  vs est  +1.17%  vs est_q  -1.54%  (sigma grid +2.74%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.065%)  worst z +14 B (+0.3%)  yhat exact  psnr 35.32  **
+        valid    loss   3.6617  bpp 0.8511  psnr  29.83
+  8,200/50,000  loss   2.9543  bpp 0.7936  psnr  28.50  aux    71.13  lr 1.00e-04   2.03 it/s  eta  5.73 h  Y/U/V 29.72/37.79/37.58  chroma 22.6%
+  8,400/50,000  loss   2.8159  bpp 0.7714  psnr  28.95  aux    61.98  lr 1.00e-04   2.09 it/s  eta  5.53 h  Y/U/V 30.20/38.10/37.86  chroma 23.2%
+  8,600/50,000  loss   3.0286  bpp 0.7991  psnr  28.18  aux    63.08  lr 1.00e-04   2.09 it/s  eta  5.50 h  Y/U/V 29.40/37.43/37.43  chroma 22.7%
+  8,800/50,000  loss   2.9770  bpp 0.7990  psnr  28.49  aux    62.23  lr 1.00e-04   2.09 it/s  eta  5.48 h  Y/U/V 29.70/37.81/37.67  chroma 22.8%
+  9,000/50,000  loss   2.8976  bpp 0.7880  psnr  28.75  aux    66.67  lr 1.00e-04   2.09 it/s  eta  5.45 h  Y/U/V 29.97/37.85/37.92  chroma 23.1%
+  9,200/50,000  loss   2.9118  bpp 0.7903  psnr  28.66  aux    61.40  lr 1.00e-04   2.09 it/s  eta  5.43 h  Y/U/V 29.77/38.03/38.05  chroma 22.8%
+  9,400/50,000  loss   2.9795  bpp 0.8085  psnr  28.47  aux    67.03  lr 1.00e-04   2.09 it/s  eta  5.40 h  Y/U/V 29.80/37.62/37.34  chroma 22.7%
+  9,600/50,000  loss   2.8894  bpp 0.7972  psnr  28.63  aux    64.40  lr 1.00e-04   2.09 it/s  eta  5.37 h  Y/U/V 29.86/37.93/37.96  chroma 22.6%
+  9,800/50,000  loss   2.9381  bpp 0.7985  psnr  28.57  aux    64.86  lr 1.00e-04   2.09 it/s  eta  5.35 h  Y/U/V 29.80/37.84/37.75  chroma 22.8%
+ 10,000/50,000  loss   2.8301  bpp 0.7969  psnr  28.79  aux    64.03  lr 1.00e-04   2.09 it/s  eta  5.32 h  Y/U/V 29.98/38.02/38.02  chroma 22.8%
+        rtcheck  act 0.7064  vs est  +1.88%  vs est_q  -0.95%  (sigma grid +2.85%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.043%)  worst z +27 B (+1.0%)  yhat exact  psnr 35.25  **
+        valid    loss   3.6195  bpp 0.8320  psnr  29.69
+ 10,200/50,000  loss   2.9320  bpp 0.8190  psnr  28.49  aux    67.78  lr 1.00e-04   2.03 it/s  eta  5.45 h  Y/U/V 29.75/37.73/37.47  chroma 22.7%
+ 10,400/50,000  loss   2.8743  bpp 0.8050  psnr  28.80  aux    67.40  lr 1.00e-04   2.09 it/s  eta  5.27 h  Y/U/V 29.97/38.14/38.19  chroma 22.8%
+ 10,600/50,000  loss   2.8244  bpp 0.7979  psnr  28.73  aux    58.70  lr 1.00e-04   2.09 it/s  eta  5.24 h  Y/U/V 29.87/37.85/38.07  chroma 22.7%
+ 10,800/50,000  loss   2.8827  bpp 0.8098  psnr  28.55  aux    62.97  lr 1.00e-04   2.09 it/s  eta  5.21 h  Y/U/V 29.82/37.70/37.64  chroma 22.9%
+ 11,000/50,000  loss   2.8285  bpp 0.8091  psnr  28.82  aux    60.14  lr 1.00e-04   2.08 it/s  eta  5.20 h  Y/U/V 30.05/38.07/37.86  chroma 22.7%
+ 11,200/50,000  loss   2.8474  bpp 0.8099  psnr  28.74  aux    66.70  lr 1.00e-04   2.08 it/s  eta  5.17 h  Y/U/V 29.94/38.07/37.93  chroma 22.7%
+ 11,400/50,000  loss   2.8298  bpp 0.8128  psnr  28.77  aux    67.05  lr 1.00e-04   2.07 it/s  eta  5.18 h  Y/U/V 30.06/37.96/37.85  chroma 22.8%
+ 11,600/50,000  loss   2.8633  bpp 0.8156  psnr  28.63  aux    64.24  lr 1.00e-04   2.05 it/s  eta  5.19 h  Y/U/V 29.87/37.66/37.85  chroma 22.9%
+ 11,800/50,000  loss   2.8555  bpp 0.8179  psnr  28.61  aux    67.41  lr 1.00e-04   2.05 it/s  eta  5.17 h  Y/U/V 29.87/37.82/37.76  chroma 22.8%
+ 12,000/50,000  loss   2.8054  bpp 0.8157  psnr  28.82  aux    67.51  lr 1.00e-04   2.06 it/s  eta  5.11 h  Y/U/V 30.04/37.81/37.97  chroma 23.0%
+        rtcheck  act 0.7115  vs est  +1.81%  vs est_q  -1.00%  (sigma grid +2.84%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.094%)  worst z +12 B (+0.6%)  yhat exact  psnr 34.97  **
+        valid    loss   3.5186  bpp 0.8440  psnr  29.99
+ 12,200/50,000  loss   2.8289  bpp 0.8244  psnr  28.74  aux    66.95  lr 1.00e-04   1.98 it/s  eta  5.31 h  Y/U/V 29.97/38.19/37.74  chroma 22.8%
+ 12,400/50,000  loss   2.7587  bpp 0.8150  psnr  28.96  aux    62.09  lr 1.00e-04   2.02 it/s  eta  5.17 h  Y/U/V 30.18/38.26/38.07  chroma 23.0%
+ 12,600/50,000  loss   2.8446  bpp 0.8268  psnr  28.65  aux    67.20  lr 1.00e-04   2.02 it/s  eta  5.15 h  Y/U/V 29.97/37.64/37.77  chroma 23.1%
+ 12,800/50,000  loss   2.7913  bpp 0.8211  psnr  28.82  aux    64.43  lr 1.00e-04   1.98 it/s  eta  5.22 h  Y/U/V 30.01/38.01/38.08  chroma 22.8%
+ 13,000/50,000  loss   2.8522  bpp 0.8364  psnr  28.68  aux    66.91  lr 1.00e-04   1.96 it/s  eta  5.24 h  Y/U/V 29.94/37.66/37.82  chroma 22.9%
+ 13,200/50,000  loss   2.7363  bpp 0.8152  psnr  28.95  aux    62.70  lr 1.00e-04   2.02 it/s  eta  5.06 h  Y/U/V 30.27/37.98/37.84  chroma 23.2%
+ 13,400/50,000  loss   2.8118  bpp 0.8348  psnr  28.70  aux    66.46  lr 1.00e-04   2.01 it/s  eta  5.05 h  Y/U/V 29.85/38.27/37.83  chroma 22.6%
+ 13,600/50,000  loss   2.7478  bpp 0.8263  psnr  29.03  aux    67.29  lr 1.00e-04   2.07 it/s  eta  4.90 h  Y/U/V 30.24/38.46/38.16  chroma 23.0%
+ 13,800/50,000  loss   2.7991  bpp 0.8333  psnr  28.80  aux    61.46  lr 1.00e-04   2.06 it/s  eta  4.88 h  Y/U/V 30.06/38.07/37.94  chroma 23.0%
+ 14,000/50,000  loss   2.7599  bpp 0.8344  psnr  28.91  aux    67.22  lr 1.00e-04   2.07 it/s  eta  4.84 h  Y/U/V 30.16/38.01/37.99  chroma 23.0%
+        rtcheck  act 0.7190  vs est  +1.16%  vs est_q  -1.12%  (sigma grid +2.31%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.203%)  worst y_uv +21 B (+0.2%)  yhat exact  psnr 35.26  **
+        valid    loss   3.4547  bpp 0.8468  psnr  30.00
+ 14,200/50,000  loss   2.7367  bpp 0.8264  psnr  28.92  aux    63.65  lr 1.00e-04   2.00 it/s  eta  4.98 h  Y/U/V 30.25/38.04/37.78  chroma 23.2%
+ 14,400/50,000  loss   2.8204  bpp 0.8398  psnr  28.72  aux    67.18  lr 1.00e-04   2.05 it/s  eta  4.83 h  Y/U/V 29.86/38.10/38.12  chroma 22.9%
+ 14,600/50,000  loss   2.7522  bpp 0.8364  psnr  28.93  aux    65.33  lr 1.00e-04   2.07 it/s  eta  4.74 h  Y/U/V 30.24/37.89/38.03  chroma 23.1%
+ 14,800/50,000  loss   2.7725  bpp 0.8420  psnr  28.99  aux    63.41  lr 1.00e-04   2.05 it/s  eta  4.77 h  Y/U/V 30.29/37.95/37.95  chroma 23.2%
+ 15,000/50,000  loss   2.7192  bpp 0.8353  psnr  29.11  aux    68.42  lr 1.00e-04   2.07 it/s  eta  4.69 h  Y/U/V 30.29/38.45/38.44  chroma 22.8%
+ 15,200/50,000  loss   2.7569  bpp 0.8507  psnr  28.88  aux    69.07  lr 1.00e-04   2.02 it/s  eta  4.79 h  Y/U/V 30.11/38.08/37.85  chroma 23.2%
+ 15,400/50,000  loss   2.7380  bpp 0.8439  psnr  28.89  aux    63.84  lr 1.00e-04   2.06 it/s  eta  4.66 h  Y/U/V 30.23/37.82/37.79  chroma 23.1%
+ 15,600/50,000  loss   2.6458  bpp 0.8379  psnr  29.27  aux    66.57  lr 1.00e-04   2.05 it/s  eta  4.66 h  Y/U/V 30.49/38.36/38.40  chroma 23.2%
+ 15,800/50,000  loss   2.7556  bpp 0.8532  psnr  28.85  aux    67.48  lr 1.00e-04   2.06 it/s  eta  4.60 h  Y/U/V 30.16/37.94/37.86  chroma 23.2%
+ 16,000/50,000  loss   2.7967  bpp 0.8527  psnr  28.66  aux    64.63  lr 1.00e-04   2.08 it/s  eta  4.55 h  Y/U/V 29.96/37.77/37.62  chroma 23.1%
+        rtcheck  act 0.7404  vs est  +1.89%  vs est_q  -0.72%  (sigma grid +2.63%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.181%)  worst z +31 B (+1.1%)  yhat exact  psnr 35.44  **
+        valid    loss   3.4505  bpp 0.8935  psnr  29.63
+ 16,200/50,000  loss   2.6727  bpp 0.8426  psnr  29.09  aux    63.26  lr 1.00e-04   2.00 it/s  eta  4.70 h  Y/U/V 30.39/38.11/38.14  chroma 23.4%
+ 16,400/50,000  loss   2.7952  bpp 0.8623  psnr  28.73  aux    64.56  lr 1.00e-04   2.07 it/s  eta  4.52 h  Y/U/V 29.98/37.73/37.71  chroma 23.3%
+ 16,600/50,000  loss   2.6984  bpp 0.8590  psnr  29.04  aux    71.13  lr 1.00e-04   2.07 it/s  eta  4.47 h  Y/U/V 30.24/38.31/38.25  chroma 23.0%
+ 16,800/50,000  loss   2.6569  bpp 0.8470  psnr  29.26  aux    66.78  lr 1.00e-04   2.08 it/s  eta  4.43 h  Y/U/V 30.52/38.41/38.35  chroma 23.4%
+ 17,000/50,000  loss   2.6959  bpp 0.8599  psnr  29.10  aux    65.11  lr 1.00e-04   2.09 it/s  eta  4.39 h  Y/U/V 30.42/38.30/37.90  chroma 23.4%
+ 17,200/50,000  loss   2.6754  bpp 0.8608  psnr  29.05  aux    66.16  lr 1.00e-04   2.08 it/s  eta  4.38 h  Y/U/V 30.24/38.25/38.30  chroma 23.2%
+ 17,400/50,000  loss   2.6969  bpp 0.8656  psnr  29.02  aux    65.17  lr 1.00e-04   2.02 it/s  eta  4.49 h  Y/U/V 30.27/38.18/37.94  chroma 23.2%
+ 17,600/50,000  loss   2.6413  bpp 0.8566  psnr  29.16  aux    62.28  lr 1.00e-04   2.08 it/s  eta  4.34 h  Y/U/V 30.46/38.23/38.17  chroma 23.6%
+ 17,800/50,000  loss   2.6679  bpp 0.8580  psnr  29.17  aux    65.86  lr 1.00e-04   2.07 it/s  eta  4.32 h  Y/U/V 30.36/38.47/38.47  chroma 23.6%
+ 18,000/50,000  loss   2.6366  bpp 0.8694  psnr  29.15  aux    68.63  lr 1.00e-04   2.08 it/s  eta  4.28 h  Y/U/V 30.42/38.21/38.22  chroma 23.2%
+        rtcheck  act 0.6984  vs est  +1.65%  vs est_q  -0.41%  (sigma grid +2.07%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.188%)  worst y_uv +9 B (+0.1%)  yhat exact  psnr 35.19  ok
+        valid    loss   3.3199  bpp 0.8577  psnr  30.06
+ 18,200/50,000  loss   2.6658  bpp 0.8750  psnr  29.15  aux    66.75  lr 1.00e-04   2.02 it/s  eta  4.37 h  Y/U/V 30.42/38.20/38.11  chroma 23.3%
+ 18,400/50,000  loss   2.6669  bpp 0.8642  psnr  29.10  aux    59.75  lr 1.00e-04   2.09 it/s  eta  4.20 h  Y/U/V 30.35/38.31/38.04  chroma 23.4%
+ 18,600/50,000  loss   2.6546  bpp 0.8675  psnr  29.21  aux    58.86  lr 1.00e-04   2.09 it/s  eta  4.17 h  Y/U/V 30.47/38.13/38.42  chroma 23.6%
+ 18,800/50,000  loss   2.6718  bpp 0.8762  psnr  29.08  aux    65.27  lr 1.00e-04   2.08 it/s  eta  4.16 h  Y/U/V 30.30/38.32/38.14  chroma 23.4%
+ 19,000/50,000  loss   2.6322  bpp 0.8636  psnr  29.18  aux    61.31  lr 1.00e-04   2.08 it/s  eta  4.13 h  Y/U/V 30.47/38.19/38.31  chroma 23.7%
+ 19,200/50,000  loss   2.6609  bpp 0.8678  psnr  29.04  aux    59.97  lr 1.00e-04   2.10 it/s  eta  4.08 h  Y/U/V 30.37/38.08/38.04  chroma 23.5%
+ 19,400/50,000  loss   2.6433  bpp 0.8718  psnr  29.16  aux    58.09  lr 1.00e-04   2.06 it/s  eta  4.12 h  Y/U/V 30.35/38.29/38.33  chroma 23.6%
+ 19,600/50,000  loss   2.6746  bpp 0.8726  psnr  29.18  aux    64.65  lr 1.00e-04   1.84 it/s  eta  4.60 h  Y/U/V 30.45/38.30/38.18  chroma 23.6%
+ 19,800/50,000  loss   2.6124  bpp 0.8694  psnr  29.28  aux    60.90  lr 1.00e-04   1.97 it/s  eta  4.27 h  Y/U/V 30.53/38.36/38.27  chroma 23.7%
+ 20,000/50,000  loss   2.6000  bpp 0.8723  psnr  29.27  aux    66.49  lr 1.00e-04   2.07 it/s  eta  4.02 h  Y/U/V 30.54/38.60/38.24  chroma 23.6%
+        rtcheck  act 0.7144  vs est  +1.41%  vs est_q  -0.71%  (sigma grid +2.14%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.065%)  worst y_uv +11 B (+0.1%)  yhat exact  psnr 35.88  **
+        valid    loss   3.3822  bpp 0.8907  psnr  30.32
+ 20,200/50,000  loss   2.6933  bpp 0.8840  psnr  29.12  aux    61.98  lr 1.00e-04   2.02 it/s  eta  4.09 h  Y/U/V 30.32/38.34/38.28  chroma 23.7%
+ 20,400/50,000  loss   2.6175  bpp 0.8770  psnr  29.13  aux    59.42  lr 1.00e-04   2.09 it/s  eta  3.94 h  Y/U/V 30.44/37.94/38.10  chroma 23.6%
+ 20,600/50,000  loss   2.5727  bpp 0.8659  psnr  29.40  aux    58.98  lr 1.00e-04   2.10 it/s  eta  3.90 h  Y/U/V 30.70/38.76/38.27  chroma 23.7%
+ 20,800/50,000  loss   2.5783  bpp 0.8661  psnr  29.24  aux    56.46  lr 1.00e-04   2.10 it/s  eta  3.87 h  Y/U/V 30.54/38.33/38.11  chroma 24.1%
+ 21,000/50,000  loss   2.5850  bpp 0.8724  psnr  29.33  aux    59.11  lr 1.00e-04   2.09 it/s  eta  3.85 h  Y/U/V 30.49/38.72/38.54  chroma 23.7%
+ 21,200/50,000  loss   2.6578  bpp 0.8750  psnr  29.02  aux    56.75  lr 1.00e-04   2.10 it/s  eta  3.82 h  Y/U/V 30.40/37.93/37.71  chroma 24.0%
+ 21,400/50,000  loss   2.6537  bpp 0.8817  psnr  29.14  aux    60.31  lr 1.00e-04   2.10 it/s  eta  3.79 h  Y/U/V 30.41/38.38/38.09  chroma 23.8%
+ 21,600/50,000  loss   2.5384  bpp 0.8668  psnr  29.49  aux    59.14  lr 1.00e-04   2.10 it/s  eta  3.76 h  Y/U/V 30.74/38.72/38.61  chroma 23.9%
+ 21,800/50,000  loss   2.6385  bpp 0.8825  psnr  29.13  aux    58.25  lr 1.00e-04   2.10 it/s  eta  3.74 h  Y/U/V 30.41/38.05/38.04  chroma 24.1%
+ 22,000/50,000  loss   2.5759  bpp 0.8706  psnr  29.26  aux    56.68  lr 1.00e-04   2.10 it/s  eta  3.71 h  Y/U/V 30.44/38.65/38.46  chroma 23.9%
+        rtcheck  act 0.7177  vs est  +1.24%  vs est_q  -0.43%  (sigma grid +1.68%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.398%)  worst z +20 B (+0.9%)  yhat exact  psnr 35.71  ok
+        valid    loss   3.2033  bpp 0.8783  psnr  30.66
+ 22,200/50,000  loss   2.6146  bpp 0.8812  psnr  29.40  aux    60.58  lr 1.00e-04   2.04 it/s  eta  3.79 h  Y/U/V 30.74/38.22/38.30  chroma 24.1%
+ 22,400/50,000  loss   2.5904  bpp 0.8728  psnr  29.26  aux    53.25  lr 1.00e-04   2.10 it/s  eta  3.66 h  Y/U/V 30.63/38.07/38.16  chroma 24.0%
+ 22,600/50,000  loss   2.6170  bpp 0.8807  psnr  29.21  aux    50.63  lr 1.00e-04   2.08 it/s  eta  3.65 h  Y/U/V 30.55/38.13/37.93  chroma 24.3%
+ 22,800/50,000  loss   2.6035  bpp 0.8676  psnr  29.19  aux    51.82  lr 1.00e-04   2.09 it/s  eta  3.62 h  Y/U/V 30.50/38.14/38.28  chroma 24.2%
+ 23,000/50,000  loss   2.5626  bpp 0.8753  psnr  29.50  aux    55.88  lr 1.00e-04   2.08 it/s  eta  3.60 h  Y/U/V 30.67/38.89/38.70  chroma 24.0%
+ 23,200/50,000  loss   2.5889  bpp 0.8778  psnr  29.26  aux    49.31  lr 1.00e-04   2.08 it/s  eta  3.57 h  Y/U/V 30.51/38.33/38.30  chroma 24.0%
+ 23,400/50,000  loss   2.5817  bpp 0.8785  psnr  29.30  aux    57.77  lr 1.00e-04   2.08 it/s  eta  3.55 h  Y/U/V 30.61/38.51/38.23  chroma 24.2%
+ 23,600/50,000  loss   2.5997  bpp 0.8765  psnr  29.35  aux    49.28  lr 1.00e-04   2.08 it/s  eta  3.52 h  Y/U/V 30.56/38.67/38.49  chroma 24.1%
+ 23,800/50,000  loss   2.5559  bpp 0.8802  psnr  29.39  aux    49.23  lr 1.00e-04   2.08 it/s  eta  3.50 h  Y/U/V 30.56/38.56/38.76  chroma 24.1%
+ 24,000/50,000  loss   2.5698  bpp 0.8790  psnr  29.33  aux    49.55  lr 1.00e-04   2.07 it/s  eta  3.48 h  Y/U/V 30.65/38.30/38.25  chroma 24.4%
+        rtcheck  act 0.7162  vs est  +1.29%  vs est_q  -0.44%  (sigma grid +1.73%)  oor y 0.001% z 0.000% (uv y 0.000% z 0.427%)  worst z +12 B (+0.7%)  yhat exact  psnr 35.74  ok
+        valid    loss   3.4321  bpp 0.8955  psnr  29.44
+ 24,200/50,000  loss   2.6182  bpp 0.8789  psnr  29.11  aux    49.21  lr 1.00e-04   2.02 it/s  eta  3.55 h  Y/U/V 30.42/38.17/38.03  chroma 24.2%
+ 24,400/50,000  loss   2.5499  bpp 0.8778  psnr  29.45  aux    51.32  lr 1.00e-04   2.08 it/s  eta  3.43 h  Y/U/V 30.75/38.59/38.30  chroma 24.4%
+ 24,600/50,000  loss   2.5536  bpp 0.8785  psnr  29.47  aux    51.79  lr 1.00e-04   2.08 it/s  eta  3.39 h  Y/U/V 30.75/38.45/38.46  chroma 24.2%

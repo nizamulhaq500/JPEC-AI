@@ -1,0 +1,41 @@
+# JPEG AI reimplementation — Python dependencies
+#
+# Install with:  bash setup.sh
+# Pinned loosely on purpose: this must work on both macOS/MPS and Linux/CUDA (Kaggle).
+
+# --- core ---
+torch>=2.2
+torchvision>=0.17
+numpy>=1.24
+pillow>=10.0
+pyyaml>=6.0
+tqdm>=4.66
+scipy>=1.11
+
+# --- learned-compression scaffolding + baselines + range coder ---
+# Gives us pretrained bmshj2018/mbt2018/cheng2020 to benchmark against,
+# and a working range coder to use until our me-tANS is trustworthy (Phase 9).
+compressai>=1.2.6
+
+# --- metrics (Phase 2) ---
+pytorch-msssim>=1.0.0
+piq>=0.8.0
+pyiqa>=0.1.11          # IQA-PyTorch: NLPD, PSNR-HVS-M, IW-SSIM
+
+# --- anchors (Phase 1) ---
+pillow-avif-plugin>=1.4.1   # AVIF = AV1 intra, our realistic VVC-class competitor
+
+# --- plots + report ---
+matplotlib>=3.8
+pandas>=2.1
+
+# --- demo (Phase 14) ---
+streamlit>=1.30
+streamlit-drawable-canvas>=0.9.3   # RoI mask painting
+
+# --- Track B: real ONNX model parameter sets, if we ever get them ---
+onnx>=1.15
+onnxruntime>=1.17
+
+# --- dev ---
+pytest>=8.0

@@ -1,0 +1,176 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+ladder   ladder_tb3k  (tierA, twobranch)
+betas    0.002, 0.03, 0.2
+steps    3,000 per point  ->  9,000 total
+warm     yes (each point starts from the previous)
+out      checkpoints/ladder_tb3k
+
+[1/3] beta 0.002 (lambda*255^2 = 130)
+----------------------------------------------------------------------
+WARNING: DataLoader workers unavailable (RuntimeError: torch_shm_manager at "/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/to); falling back to num_workers=0. Training will be slower but correct.
+
+run      ladder_tb3k/beta0.002
+device   cpu (10 cores)
+beta     0.002  (== compressai lambda*255^2 130)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_tb3k/beta0.002
+
+TwoBranchCodec  internal 420  luma=96/96  chroma=48/48  concat=144
+  part                    params   kMAC/pxl
+  g_a_y                  847,616       21.0
+  g_s_y                  847,521      102.0
+  h_a_y                  544,032        0.6
+  h_s_y                1,113,312        3.3
+  g_a_uv                 468,272        5.8
+  g_s_uv                 659,426       26.2
+  h_a_uv                 136,080        0.2
+  h_s_uv                 278,448        0.8
+  eb_y                     5,856           
+  eb_uv                    2,928           
+  TOTAL                4,903,491      160.0   (18.7 MiB fp32)
+  decoder                             132.4   <- compare to paper SOP 8 / BOP 28 / HOP 215
+
+    200/3,000  loss  28.0717  bpp 0.8541  psnr   4.23  aux  5934.97  lr 2.00e-05   2.01 it/s  eta  0.39 h  Y/U/V 10.26/12.33/ 8.62  chroma 26.1%
+    400/3,000  loss   7.9063  bpp 0.7276  psnr  13.84  aux  5913.85  lr 4.00e-05   1.94 it/s  eta  0.37 h  Y/U/V 19.21/19.69/18.81  chroma 24.7%
+    600/3,000  loss   5.7576  bpp 0.6602  psnr  16.58  aux  5887.45  lr 6.00e-05   1.94 it/s  eta  0.34 h  Y/U/V 21.13/21.69/22.55  chroma 19.9%
+    800/3,000  loss   4.7626  bpp 0.6251  psnr  17.45  aux  5850.41  lr 8.00e-05   2.09 it/s  eta  0.29 h  Y/U/V 21.93/22.47/23.76  chroma 18.7%
+  1,000/3,000  loss   4.3275  bpp 0.6019  psnr  17.97  aux  5800.29  lr 1.00e-04   2.14 it/s  eta  0.26 h  Y/U/V 22.28/22.82/24.74  chroma 18.4%
+  1,200/3,000  loss   4.0444  bpp 0.5916  psnr  17.83  aux  5735.49  lr 1.00e-04   2.10 it/s  eta  0.24 h  Y/U/V 22.40/22.74/24.18  chroma 18.4%
+  1,400/3,000  loss   3.7761  bpp 0.5807  psnr  17.95  aux  5657.68  lr 1.00e-04   2.05 it/s  eta  0.22 h  Y/U/V 22.83/22.63/24.59  chroma 18.6%
+  1,600/3,000  loss   3.4872  bpp 0.5689  psnr  18.57  aux  5572.66  lr 1.00e-04   2.04 it/s  eta  0.19 h  Y/U/V 23.32/23.51/24.93  chroma 17.8%
+  1,800/3,000  loss   3.3837  bpp 0.5743  psnr  18.54  aux  5476.18  lr 1.00e-04   2.06 it/s  eta  0.16 h  Y/U/V 23.48/22.94/25.31  chroma 19.7%
+  2,000/3,000  loss   3.2312  bpp 0.5646  psnr  18.62  aux  5367.26  lr 1.00e-04   2.11 it/s  eta  0.13 h  Y/U/V 23.73/22.88/25.56  chroma 18.5%
+/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/compressai/models/video/google.py:353: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @amp.autocast(enabled=False)
+        rtcheck  act 0.4296  vs est  +1.95%  vs est_q  +0.60%  (sigma grid +1.34%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  yhat exact  psnr 23.55  **
+        valid    loss   3.5758  bpp 0.4503  psnr  18.96
+  2,200/3,000  loss   3.0421  bpp 0.5492  psnr  18.89  aux  5249.96  lr 1.00e-04   1.84 it/s  eta  0.12 h  Y/U/V 24.20/23.08/25.74  chroma 17.9%
+  2,400/3,000  loss   3.0248  bpp 0.5450  psnr  18.71  aux  5120.86  lr 1.00e-04   2.05 it/s  eta  0.08 h  Y/U/V 24.02/22.93/25.32  chroma 18.3%
+  2,600/3,000  loss   2.9112  bpp 0.5321  psnr  18.83  aux  4987.09  lr 1.00e-04   2.01 it/s  eta  0.06 h  Y/U/V 23.95/22.98/25.90  chroma 18.3%
+  2,800/3,000  loss   2.6628  bpp 0.5264  psnr  19.71  aux  4836.56  lr 7.79e-05   2.02 it/s  eta  0.03 h  Y/U/V 25.13/23.78/26.70  chroma 20.9%
+  3,000/3,000  loss   2.5263  bpp 0.5439  psnr  21.81  aux  4711.00  lr 1.00e-05   2.03 it/s  eta  0.00 h  Y/U/V 24.63/28.05/29.74  chroma 23.3%
+
+final    bpp 0.4621  psnr 23.02
+gate     actual 0.4127 bpp
+         vs estimate with quantised sigma: +1.29%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +3.45%   (of which +2.14% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_tb3k/beta0.002/final.pt
+[2/3] beta 0.03 (lambda*255^2 = 1951)  warm start
+----------------------------------------------------------------------
+WARNING: DataLoader workers unavailable (RuntimeError: torch_shm_manager at "/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/to); falling back to num_workers=0. Training will be slower but correct.
+resumed warmstart.pt at step 0
+
+run      ladder_tb3k/beta0.03
+device   cpu (10 cores)
+beta     0.03  (== compressai lambda*255^2 1951)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_tb3k/beta0.03
+
+TwoBranchCodec  internal 420  luma=96/96  chroma=48/48  concat=144
+  part                    params   kMAC/pxl
+  g_a_y                  847,616       21.0
+  g_s_y                  847,521      102.0
+  h_a_y                  544,032        0.6
+  h_s_y                1,113,312        3.3
+  g_a_uv                 468,272        5.8
+  g_s_uv                 659,426       26.2
+  h_a_uv                 136,080        0.2
+  h_s_uv                 278,448        0.8
+  eb_y                     5,856           
+  eb_uv                    2,928           
+  TOTAL                4,903,491      160.0   (18.7 MiB fp32)
+  decoder                             132.4   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables               102.1 KiB
+
+    200/3,000  loss  28.5377  bpp 0.5649  psnr  22.63  aux  4664.41  lr 2.00e-05   2.19 it/s  eta  0.35 h  Y/U/V 24.61/29.92/31.54  chroma 22.2%
+    400/3,000  loss  27.1088  bpp 0.6207  psnr  23.06  aux  4631.13  lr 4.00e-05   2.13 it/s  eta  0.34 h  Y/U/V 25.24/30.31/31.52  chroma 21.8%
+    600/3,000  loss  28.0447  bpp 0.6865  psnr  22.94  aux  4583.34  lr 6.00e-05   2.15 it/s  eta  0.31 h  Y/U/V 24.97/30.29/31.37  chroma 22.8%
+    800/3,000  loss  26.3058  bpp 0.7219  psnr  22.95  aux  4519.32  lr 8.00e-05   2.18 it/s  eta  0.28 h  Y/U/V 24.98/30.32/31.46  chroma 23.7%
+  1,000/3,000  loss  26.1329  bpp 0.7480  psnr  22.87  aux  4441.29  lr 1.00e-04   2.18 it/s  eta  0.26 h  Y/U/V 25.00/30.87/30.64  chroma 24.4%
+  1,200/3,000  loss  25.8053  bpp 0.7729  psnr  23.05  aux  4348.08  lr 1.00e-04   2.19 it/s  eta  0.23 h  Y/U/V 24.87/31.24/31.40  chroma 25.3%
+  1,400/3,000  loss  24.9265  bpp 0.7939  psnr  23.26  aux  4233.51  lr 1.00e-04   2.19 it/s  eta  0.20 h  Y/U/V 24.81/31.86/31.90  chroma 25.2%
+  1,600/3,000  loss  24.0499  bpp 0.8116  psnr  23.37  aux  4114.20  lr 1.00e-04   2.17 it/s  eta  0.18 h  Y/U/V 25.33/31.69/31.39  chroma 26.1%
+  1,800/3,000  loss  23.7672  bpp 0.8311  psnr  23.35  aux  3984.63  lr 1.00e-04   2.17 it/s  eta  0.15 h  Y/U/V 25.11/31.82/31.72  chroma 26.3%
+  2,000/3,000  loss  22.6973  bpp 0.8470  psnr  23.56  aux  3840.55  lr 1.00e-04   2.19 it/s  eta  0.13 h  Y/U/V 25.40/32.11/31.90  chroma 25.5%
+        rtcheck  act 0.7131  vs est  +2.04%  vs est_q  +1.21%  (sigma grid +0.83%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  yhat exact  psnr 28.58  **
+        valid    loss  26.4124  bpp 0.8168  psnr  24.25
+  2,200/3,000  loss  21.4918  bpp 0.8591  psnr  24.06  aux  3682.59  lr 1.00e-04   2.02 it/s  eta  0.11 h  Y/U/V 25.72/32.57/32.49  chroma 25.0%
+  2,400/3,000  loss  21.1493  bpp 0.8767  psnr  23.95  aux  3507.11  lr 1.00e-04   2.13 it/s  eta  0.08 h  Y/U/V 25.63/32.48/32.61  chroma 25.3%
+  2,600/3,000  loss  20.6378  bpp 0.8778  psnr  23.87  aux  3324.79  lr 1.00e-04   2.16 it/s  eta  0.05 h  Y/U/V 25.46/32.97/32.24  chroma 25.6%
+  2,800/3,000  loss  18.6741  bpp 0.8606  psnr  24.68  aux  3137.83  lr 7.79e-05   2.17 it/s  eta  0.03 h  Y/U/V 26.52/32.98/33.07  chroma 25.9%
+  3,000/3,000  loss  18.5404  bpp 0.8797  psnr  24.82  aux  2966.57  lr 1.00e-05   2.15 it/s  eta  0.00 h  Y/U/V 26.08/34.03/34.22  chroma 24.2%
+
+final    bpp 0.8686  psnr 25.46
+gate     actual 0.7383 bpp
+         vs estimate with quantised sigma: +1.85%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +2.69%   (of which +0.82% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_tb3k/beta0.03/final.pt
+[3/3] beta 0.2 (lambda*255^2 = 13005)  warm start
+----------------------------------------------------------------------
+WARNING: DataLoader workers unavailable (RuntimeError: torch_shm_manager at "/Users/nizam/JPEC AI/.venv/lib/python3.12/site-packages/to); falling back to num_workers=0. Training will be slower but correct.
+resumed warmstart.pt at step 0
+
+run      ladder_tb3k/beta0.2
+device   cpu (10 cores)
+beta     0.2  (== compressai lambda*255^2 13005)
+steps    0 -> 3,000   batch 4  crop 256
+out      checkpoints/ladder_tb3k/beta0.2
+
+TwoBranchCodec  internal 420  luma=96/96  chroma=48/48  concat=144
+  part                    params   kMAC/pxl
+  g_a_y                  847,616       21.0
+  g_s_y                  847,521      102.0
+  h_a_y                  544,032        0.6
+  h_s_y                1,113,312        3.3
+  g_a_uv                 468,272        5.8
+  g_s_uv                 659,426       26.2
+  h_a_uv                 136,080        0.2
+  h_s_uv                 278,448        0.8
+  eb_y                     5,856           
+  eb_uv                    2,928           
+  TOTAL                4,903,491      160.0   (18.7 MiB fp32)
+  decoder                             132.4   <- compare to paper SOP 8 / BOP 28 / HOP 215
+  tables               105.5 KiB
+
+    200/3,000  loss 115.5973  bpp 0.8780  psnr  24.93  aux  2892.47  lr 2.00e-05   2.09 it/s  eta  0.37 h  Y/U/V 25.99/34.61/35.10  chroma 23.7%
+    400/3,000  loss 110.7609  bpp 0.8907  psnr  25.25  aux  2841.63  lr 4.00e-05   2.14 it/s  eta  0.34 h  Y/U/V 26.64/34.29/34.60  chroma 24.0%
+    600/3,000  loss 116.6662  bpp 0.9449  psnr  24.99  aux  2773.06  lr 6.00e-05   2.11 it/s  eta  0.32 h  Y/U/V 26.37/33.99/34.17  chroma 24.2%
+    800/3,000  loss 111.7614  bpp 0.9557  psnr  24.87  aux  2686.79  lr 8.00e-05   2.09 it/s  eta  0.29 h  Y/U/V 26.35/33.79/33.72  chroma 24.4%
+  1,000/3,000  loss 110.2945  bpp 0.9730  psnr  24.98  aux  2589.03  lr 1.00e-04   2.08 it/s  eta  0.27 h  Y/U/V 26.38/33.99/34.01  chroma 24.5%
+  1,200/3,000  loss 114.5069  bpp 0.9964  psnr  24.65  aux  2478.87  lr 1.00e-04   2.08 it/s  eta  0.24 h  Y/U/V 26.15/33.25/33.58  chroma 24.7%
+  1,400/3,000  loss 113.7472  bpp 1.0000  psnr  24.55  aux  2346.47  lr 1.00e-04   2.12 it/s  eta  0.21 h  Y/U/V 25.97/33.62/33.56  chroma 24.6%
+  1,600/3,000  loss 108.3891  bpp 0.9976  psnr  24.92  aux  2215.70  lr 1.00e-04   2.17 it/s  eta  0.18 h  Y/U/V 26.60/34.11/33.36  chroma 24.4%
+  1,800/3,000  loss 110.4663  bpp 1.0122  psnr  24.56  aux  2084.44  lr 1.00e-04   2.08 it/s  eta  0.16 h  Y/U/V 26.14/33.17/33.73  chroma 24.5%
+  2,000/3,000  loss 106.2837  bpp 1.0360  psnr  24.97  aux  1944.56  lr 1.00e-04   2.01 it/s  eta  0.14 h  Y/U/V 26.52/33.92/33.60  chroma 24.4%
+        rtcheck  act 0.9728  vs est  +2.48%  vs est_q  +1.54%  (sigma grid +0.93%)  oor y 0.000% z 0.000% (uv y 0.000% z 0.000%)  yhat exact  psnr 30.54  **
+        valid    loss 127.7821  bpp 1.0807  psnr  25.76
+  2,200/3,000  loss 105.9714  bpp 1.0363  psnr  24.71  aux  1800.79  lr 1.00e-04   1.89 it/s  eta  0.12 h  Y/U/V 26.56/33.21/33.05  chroma 24.6%
+  2,400/3,000  loss 105.2576  bpp 1.0565  psnr  24.78  aux  1651.58  lr 1.00e-04   1.99 it/s  eta  0.08 h  Y/U/V 26.33/33.64/33.71  chroma 24.7%
+  2,600/3,000  loss 102.1064  bpp 1.0530  psnr  24.84  aux  1499.56  lr 1.00e-04   2.03 it/s  eta  0.05 h  Y/U/V 26.22/33.93/33.97  chroma 24.5%
+  2,800/3,000  loss  92.7420  bpp 1.0317  psnr  25.74  aux  1350.98  lr 7.79e-05   1.97 it/s  eta  0.03 h  Y/U/V 27.56/34.05/34.26  chroma 24.8%
+  3,000/3,000  loss  92.8093  bpp 1.0554  psnr  25.63  aux  1213.86  lr 1.00e-05   2.04 it/s  eta  0.00 h  Y/U/V 26.91/34.80/35.05  chroma 23.6%
+
+final    bpp 1.0836  psnr 26.41
+gate     actual 0.9503 bpp
+         vs estimate with quantised sigma: +2.24%   <- the coder/table gate, target +-0.5%
+         vs estimate the loss saw:         +2.67%   (of which +0.42% is the 32-level sigma grid)
+         out of table range: y 0.000%  z 0.000%
+         yhat bit-exact through the coder: True
+wrote    checkpoints/ladder_tb3k/beta0.2/final.pt
+
+==============================================================================
+ladder summary   (act bpp and psnr are from the REAL bitstream)
+------------------------------------------------------------------------------
+    beta   lambda    steps  est bpp  act bpp    psnr   gap_q     oor  exact
+   0.002      130    3,000   0.4621   0.4127   23.02   +1.29   0.000   True
+    0.03     1951    3,000   0.8686   0.7383   25.46   +1.85   0.000   True
+     0.2    13005    3,000   1.0836   0.9503   26.41   +2.24   0.000   True
+------------------------------------------------------------------------------
+WARNING: the coder/table gate failed at beta 0.002 (+1.29%), 0.03 (+1.85%), 0.2 (+2.24%)
+valid:   /Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR
+
+next: python -m jpegai.eval.runbench --neural checkpoints/ladder_tb3k --codecs jpeg,webp,avif

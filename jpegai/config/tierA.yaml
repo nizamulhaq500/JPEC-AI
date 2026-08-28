@@ -1,0 +1,259 @@
+# Tier A -- the configuration we develop and validate on the Mac.
+#
+# Full JPEG AI architecture at reduced width. Every tool from the paper is
+# present and ablatable; only the channel counts are cut. Anything marked
+# STRUCTURAL must not be changed -- those numbers are the paper's design, not
+# tuning knobs, and changing them stops this being JPEG AI.
+#
+# Switch to config/full.yaml (160/96 channels) for the cloud training run.
+
+name: tierA
+paper_ref: "Esenlik et al., TCSVT 36(2):2520-2537, Feb 2026"
+
+# ---------------------------------------------------------------------------
+# Colour  (paper section VI-A, VI-B)
+# ---------------------------------------------------------------------------
+colour:
+  matrix: bt709                # ITU-R BT.709, what the models are trained on
+  internal_format: "420"       # c_ver_minus1 / c_hor_minus1 in the PIH
+  output_format: "444"         # s_ver_minus1 / s_hor_minus1; may differ -> normative upsample
+  colour_transform_idx: 0      # CONFIRMED colour_transformation/params.py:
+                               #   0 = RGB out, 1 = YUV out, 2 = custom, null = auto
+  bitdepth: 8
+  # RESOLVED. Paper eq. (4) looked like it had two typos; in fact the standard
+  # fixes no coefficients at all. `clr_tr_matrix` is nine 8-bit integers signalled
+  # in the picture header, defaulting to the identity, and the decoder inverts it
+  # numerically: inv = inverse(matrix / 255.0) * 255.0. So eq. (4) is one
+  # *instance* of a signalled matrix, not a normative constant. We ship the
+  # textbook BT.709 inverse as our default matrix, which is a legal choice.
+  # CONFIRMED colour_processing/colour_transformation/colour_transformation.py.
+  use_textbook_bt709_inverse: true
+  signalled_matrix_bitdepth: 8      # CONFIRMED: matrix entries are uint8, /255.0
+
+# ---------------------------------------------------------------------------
+# Latent geometry  (STRUCTURAL -- do not change)
+# ---------------------------------------------------------------------------
+geometry:
+  analysis_stages: 4           # STRUCTURAL: stride-2 each -> latent at /16
+  hyper_stages: 2              # STRUCTURAL: two more     -> hyper latent at /64
+  total_downsample: 64         # 2^6; the display-window pad multiple
+  rvs_pool: 8                  # STRUCTURAL: 8x8 pooling of Isigma -> /128
+
+# ---------------------------------------------------------------------------
+# Channel widths  (the ONLY thing Tier A cuts)
+# ---------------------------------------------------------------------------
+channels:
+  primary_latent:   96         # paper: 160   (y_Y, Isigma_Y, r_Y, yhat_Y)
+  secondary_latent: 48         # paper:  96   (y_UV, ...)
+  # DERIVED, not a free knob. The hyper autoencoder is channel-preserving
+  # (hyper encoder: 5x conv3x3 all chs->chs; hyper scale decoder: chs->chs*16 then
+  # PixelShuffle(4) -> chs), and every hyper module is built with `chs=self.chs_ls`
+  # of its own branch -- see common_modules.py:116-128. So the luma hyper latent is
+  # the luma latent width and the chroma hyper latent is the chroma one. The loader
+  # asserts this. The paper's "128" is the reference software's unused fallback
+  # default (sep_chan_tool.py:69); the real luma value is 160.
+  hyper_latent:           96   # == primary_latent
+  hyper_secondary_latent: 48   # == secondary_latent
+  # p_ddot_Y is produced at /32 then pixel-shuffled x2 up to /16, so the
+  # pre-shuffle channel count is 4x the post-shuffle one (paper: 640 -> 160).
+  # Confirmed: hyper decoder's last conv is conv3x3(chs, 4*chs).
+  pred_primary_preshuffle:   384   # = 96 * 4
+  pred_secondary_preshuffle: 192   # = 48 * 4
+  # Secondary synthesis input = concat(yhat_UV, yhat_Y), paper eq. (3).
+  # Confirmed: *_sec.py decoders take chs_ls=<chroma> and chs_supp=<luma>.
+  secondary_synthesis_in: 144      # = 48 + 96   (paper: 256 = 96 + 160)
+  analysis_width: [96, 96, 128, 96]     # per-stage trunk widths, our design
+  synthesis_width: [96, 128, 96, 96]
+
+# ---------------------------------------------------------------------------
+# Entropy model  (paper section VI-C, VI-D)
+#
+# Every value below carries a provenance tag:
+#   CONFIRMED <file>  -- read out of the WG1 reference software, normative
+#   PAPER             -- stated in the overview paper's main text
+#   OURS              -- our choice, no normative source; free to tune
+# Full provenance table with line numbers: docs/06-normative-constants.md
+# ---------------------------------------------------------------------------
+entropy:
+  mcm_stages: 4                # STRUCTURAL: 2x2 spatial tile, luma only
+  # CONFIRMED contexts/utils.py ContextUtils.down_shuffle -- it returns
+  # (part1, part4, part2, part3) where raster order is part1=(0,0) part2=(0,1)
+  # part3=(1,0) part4=(1,1). Independently confirmed by context.py's odd-size
+  # guards: dy=1 for stages {1,3}, dx=1 for stages {1,2}.
+  mcm_group_order: [[0,0], [1,1], [0,1], [1,0]]
+  mcm_on_secondary: false      # paper: explicitly not worth the complexity
+  mcm_overlap_in_latent_samples: 8            # CONFIRMED CCS_SGMM/params.py
+  hyper_decoder_overlap_in_latent_samples: 2  # CONFIRMED CCS_SGMM/params.py
+
+  # --- scale (sigma) quantisation, eq. (13) -------------------------------
+  # Isigma is an integer index in the log domain; sigma = min * exp(k * Isigma)
+  # with k = (ln(max) - ln(min)) / (level - 1). CONFIRMED CCS_SGMM/params.py.
+  sigma_quant_level: 32        # CONFIRMED  (the CDF table's 32 rows)
+  sigma_quant_min: 0.11        # CONFIRMED
+  sigma_quant_max: 54.82       # CONFIRMED
+  sigma_bound_offset: 0.5      # CONFIRMED
+  sigma_symbols: 256
+  sigma_precision: 7           # CONFIRMED quantization/params.py  (we had 8)
+  # (level - 1) * 2^precision - 1 = 31 * 128 - 1. Our 3968 guess was the count.
+  isigma_table_size: 3968      # CONFIRMED = 31 * 2^7 + 1 entries [0, 3967]
+  isigma_pad_value: 1411       # PAPER, eq. (7) boundary padding
+  # scaled_sigma_precision = scaler_precision + sigma_precision = 10 + 7 = 17,
+  # and lsbs_scale_mode.py hardcodes 17 -- the chain is self-consistent.
+  scaler_precision: 10         # CONFIRMED = gain_vector_precision + beta_displacement_precision
+
+  # --- hyper latent (z) entropy coding ------------------------------------
+  # FactorizedProbModel(chs_ls, max_symbol=z_range-1): the CDF has one row per
+  # channel of THAT branch, so there is no fixed row count.
+  z_offset: 31                 # CONFIRMED CCS_SGMM/params.py
+  z_range: 63                  # CONFIRMED  -> symbols [-31, 31]
+  hyper_max_symbol: 62         # CONFIRMED = z_range - 1
+  abs_in_hyperprior: true      # CONFIRMED: hyper encoder consumes abs(y)
+  bdl_clipping_range: [-1069, 702]   # CONFIRMED quantization/params.py
+
+  # --- skip mode  (paper section VI-H) ------------------------------------
+  skip_block_size: 1           # CONFIRMED skip_ls/params.py
+  skip_threshold: 382          # CONFIRMED thr_skip  (we had 0 = "calibrate later")
+  skip_judge_thr: 3            # CONFIRMED
+  skip_cube_thr: 3             # CONFIRMED: 1 in skip_ls/params.py, 3 in CTC common.json
+  skip_cube: [16, 16, 16]      # cube-based skip override granularity
+
+  # --- me-tANS  (paper section VI-D) --------------------------------------
+  # CONFIRMED entropy_coding/lib_wrappers/mans/utils.py. NOT a tableLog: the
+  # reference parameterises by probability mass bits, so the state count is
+  # 2^8 = 256 per sigma class, and 32 * 256 * 4 B = 32 KiB of decode
+  # transitions -- consistent with the paper's "~100 KB of tables" overall.
+  tans_mass_bits: 8            # CONFIRMED  (we had tans_table_log: 11)
+  tans_escape_threshold_exp: -11   # CONFIRMED: probs below 2^-11 use an escape
+  tans_symbol_order: zigzag    # CONFIRMED get_sequence / get_inverse_sequence
+  tans_substreams: 2           # CONFIRMED cdf_first / cdf_second+128 state split
+  coder: range                 # `range` (compressai) until Phase 9, then `metans`
+
+# ---------------------------------------------------------------------------
+# Synthesis transforms  (paper section VI-F) -- three decoders, one codestream
+#
+# Two structural facts the paper leaves implicit, both CONFIRMED from the
+# reference software:
+#
+# 1. There are THREE decoders but only TWO encoders. There is no sop_prim.py /
+#    sop_sec.py under autoencoder_data/encoder/ -- SOP reuses the BOP encoder
+#    (cfg/profiles/bopEnc_sopDec.json makes this explicit). So `has_encoder`
+#    below is not a simplification we chose; it is the standard's design.
+# 2. `synthesis_transform_id` in the codestream is a CUMULATIVE CAPABILITY
+#    LIST, not a single selector: SOP signals [0], BOP [1,0], HOP [2,1,0].
+#    A HOP stream is therefore decodable by an SOP decoder. That is what makes
+#    the multi-branch scalability claim work.
+# ---------------------------------------------------------------------------
+decoders:
+  - id: 0
+    name: SOP
+    upsample: pixelshuffle     # 2x2 conv + pixel shuffle
+    final_channels: 24         # paper: 32
+    allowed_ops: [conv, relu, relu6, pixelshuffle]
+    has_encoder: false         # CONFIRMED: reuses the BOP encoder
+    signals: [0]               # CONFIRMED cfg/profiles/*.json
+  - id: 1
+    name: BOP
+    upsample: deconv4x4        # pixel shuffle ONLY in the final layer
+    final_channels: 48         # paper: 64
+    allowed_ops: [conv, deconv, relu, relu6, pixelshuffle]
+    has_encoder: true
+    signals: [1, 0]
+  - id: 2
+    name: HOP
+    upsample: deconv4x4
+    final_channels: 96
+    allowed_ops: null          # unrestricted: residual blocks, attention, GDN
+    has_encoder: true
+    signals: [2, 1, 0]
+# Extra head answering a question the paper leaves open: what sits between
+# BOP's 28 and HOP's 215 kMAC/pxl? Enabled in Phase 13. OURS, not normative.
+  - id: 3
+    name: MOP
+    enabled: false
+    upsample: deconv4x4
+    final_channels: 64
+    allowed_ops: null
+    has_encoder: false
+    signals: [3, 1, 0]
+
+# ---------------------------------------------------------------------------
+# Coding tools  (paper section VI-G .. VI-M)
+# ---------------------------------------------------------------------------
+tools:
+  rvs:  {enable: true,  learn_tables: true}   # eqs 7-9,  paper: 2.2% -- biggest tool
+  lsbs: {enable: true,  learn_tables: true}   # eq. 10,   paper: 0.4%
+  lef:  {enable: true}                        # luma edge filter,       paper: 0.3%
+  icci: {enable: true}                        # inter-channel corr.,    paper: 0.2%
+  efe_linear:    {enable: true}               # chroma, paper: -0.2% BD-rate, +12% chroma PSNR
+  efe_nonlinear: {enable: true}               # chroma, paper: -0.2% BD-rate,  +8% chroma PSNR
+  # We do not have the normative T1/T2/TP/TR tables (no ISO access), so we learn
+  # them with the rest of the codec frozen. Documented deviation.
+
+# ---------------------------------------------------------------------------
+# Rate control  (paper section VI-I, eqs 11-15)
+# ---------------------------------------------------------------------------
+rate:
+  # The key compute saving: ONE trained model + gain units = the whole RD curve,
+  # using the standard's own variable-rate mechanism rather than 4 trainings.
+  variable_rate: true
+  beta_range: [-40, 40]        # betaDisplacementLog sampled uniformly in training
+  beta_eval_points: [-32, -16, 0, 16, 32]   # 5 points -> enough for a cubic BD-rate fit
+  gain_unit: true              # mref[modelID, comp, c], per-channel
+  gain_3d: true                # + spatial quality map (SOQ) -> RoI coding
+  int_bits: 12                 # mref/step/sigma_precision are 12-bit signed
+  # CONFIRMED quantization/gain_unit/params.py -- the real 18-entry RD ladder.
+  # The gain unit interpolates between these; the four *trained* base models sit
+  # at beta = 0.002, 0.012, 0.075, 0.5 (paper section VI-I).
+  beta_list: [0.0002, 0.0005, 0.001, 0.002, 0.004, 0.007, 0.01, 0.015, 0.03,
+              0.05, 0.075, 0.1, 0.2, 0.5, 0.75, 1.0, 2.0, 3.0]
+  base_model_beta: 0.002       # CONFIRMED CCS_SGMM/params.py default
+  # CONFIRMED quantization/params.py
+  beta_displacement_precision: 5
+  beta_displacement_log_bitdepth: 12
+  gain_vector_bitdepth: 6
+  gain_vector_precision: 5
+  gain_vector_log_bitdepth: 12
+
+# ---------------------------------------------------------------------------
+# Functionality  (paper section VI-J .. VI-L)
+# ---------------------------------------------------------------------------
+functionality:
+  size_handling: layer_cropping   # or `display_window` (pad to 64, crop output)
+  synthesis_tiling: {enable: false, tile: 512, halo: 32}
+  region_partitioning: {enable: false, grid: [1, 1], independent: true}
+  progressive: {enable: true, strategy: mcm_stage}   # mcm_stage | channel | spatial
+  monochrome_fast_path: true      # decode luma only, skip the secondary branch
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+train:
+  crop: 256
+  batch: 8
+  lr: 1.0e-4
+  lr_final: 1.0e-5             # drop for the last 10% of iterations
+  iterations: 400000
+  grad_clip: 1.0
+  # Paper: "prioritise the quality of the luma component during training."
+  distortion_weights: {y: 6.0, u: 1.0, v: 1.0}
+  loss: {mse: 1.0, ms_ssim: 0.1}
+  # Joint training of all three synthesis heads off one shared analysis transform.
+  decoder_weights: {0: 1.0, 1: 1.0, 2: 1.0}
+  # Noise for the rate branch (honest entropy model), STE for the distortion
+  # branch (honest synthesis transform). See docs/01 section 3.
+  quantisation: {rate: noise, distortion: ste}
+  amp: false                   # MPS autocast is unreliable; revisit on CUDA
+  seed: 1234
+
+data:
+  train: [data/crops/div2k_train, data/crops/flickr2k]
+  valid: data/div2k/DIV2K_valid_HR
+  test:  data/kodak
+
+eval:
+  # The paper's seven. PSNR-HVS, not PSNR-HVS-M: the QAF reference calls
+  # psnr_hvsm.psnr_hvs_hvsm() and keeps the FIRST return value. See
+  # ref/jpeg-ai-qaf/metrics.py and jpegai/eval/metrics.py::PAPER_SEVEN.
+  metrics: [ms_ssim, vif, fsim, vmaf, nlpd, psnr_hvs, iw_ssim]
+  anchors: [jpeg, webp, avif]
+  learned_baselines: [bmshj2018-hyperprior, mbt2018, cheng2020-anchor]
