@@ -350,6 +350,67 @@ def test_bdrate_table_avg_is_unweighted_mean():
     assert abs(row["AVG"] - (row["m1"] + row["m2"]) / 2) < 1e-12
 
 
+# A saturating metric measured by a wide anchor sweep and a narrow ladder is the
+# configuration that made `fsim` read +56% when our codec used fewer bits than
+# JPEG at every measured quality. The tests below pin the property that rules that
+# out, rather than the number that happened to come out of the fix.
+def _saturating_pair(anchor_lo, anchor_hi, n_anchor=11):
+    """Anchor sweep and a 5-point ladder needing exactly half the bits at equal q.
+
+    Quality saturates toward 1 as rate grows, like ms_ssim / fsim / iw_ssim. The
+    ladder covers only the top of the anchor's quality range, as a neural ladder
+    does against libjpeg. The true BD-rate is -50% for every choice of span.
+    """
+    r_a = np.geomspace(anchor_lo, anchor_hi, n_anchor)
+    q_a = 1.0 - 1.0 / r_a
+    q_t = np.linspace(0.977, 0.9989, 5)
+    r_t = (1.0 / (1.0 - q_t)) / 2.0
+    return r_a, q_a, r_t, q_t
+
+
+def test_bdrate_is_correct_on_a_saturating_metric_with_partial_overlap():
+    r_a, q_a, r_t, q_t = _saturating_pair(4.0, 1600.0)
+    assert abs(bd_rate(r_a, q_a, r_t, q_t) + 50.0) < 3.0
+
+
+def test_bdrate_ignores_anchor_points_outside_the_overlap():
+    """The property that a global polynomial fit does not have.
+
+    All four sweeps pass through the integration window identically and differ only
+    in how far *below* it they extend, so the answer must not move. The old cubic
+    swung 17 points across these same inputs.
+    """
+    spans = [(4.0, 1600.0), (2.0, 3000.0), (1.5, 4000.0), (1.33, 8000.0)]
+    got = [bd_rate(*_saturating_pair(lo, hi)) for lo, hi in spans]
+    assert max(got) - min(got) < 0.5, got
+    assert all(abs(v + 50.0) < 3.0 for v in got), got
+
+
+def test_bdrate_table_reports_how_much_of_the_anchor_range_was_covered():
+    """A narrow ladder must be flagged, not silently averaged over a slice."""
+    r_a, q_a, r_t, q_t = _saturating_pair(4.0, 1600.0)
+    a = {"bpp": r_a, "m": q_a}
+    t = {"bpp": r_t, "m": q_t}
+    got, tot = bd_rate_table(a, t, ["m"])["_coverage"]
+    assert tot == 11
+    assert 0 < got < tot                      # genuinely partial, and it says so
+
+    full = bd_rate_table(a, {"bpp": r_a / 2, "m": q_a}, ["m"])["_coverage"]
+    assert full == (11, 11)                   # same range -> nothing to warn about
+
+
+def test_bdrate_collapses_ties_in_a_saturated_metric():
+    """PCHIP needs a strictly increasing abscissa.
+
+    A metric that has run out of headroom returns the same value at two adjacent
+    rate points. That is real data, not a bug, and it must not raise.
+    """
+    rate = [0.1, 0.2, 0.4, 0.8, 1.6]
+    qual = [0.990, 0.997, 0.9990, 0.9999, 0.9999]     # last two tie
+    out = bd_rate(rate, qual, [r / 2 for r in rate], qual)
+    assert np.isfinite(out) and abs(out + 50.0) < 1e-6
+
+
 # ---------------------------------------------------------------------------
 # runbench plumbing
 # ---------------------------------------------------------------------------
@@ -440,6 +501,61 @@ def test_runbench_missing_dataset_message():
         assert "setup.sh" in str(exc), "the error should say how to fix it"
     else:
         raise AssertionError("missing dataset must raise")
+
+
+def test_rerender_reproduces_the_report_without_reencoding():
+    """`--rerender` must give identical numbers to the measure path.
+
+    The point of the flag is that the JSON *is* the measurement, so a changed
+    analysis can be re-derived from it in milliseconds. That is only true if the
+    re-derivation agrees exactly with what the full run would have produced -- if it
+    drifted, the cheap path would quietly become a second, wrong answer.
+    """
+    stub = _install_stubs()
+    names = ["ms_ssim", "nlpd"]
+    rate = np.geomspace(0.2, 3.0, 8)
+    curves = {
+        "jpeg": {"bpp": list(rate), "quality": list(range(8)), "n_images": 3,
+                 "ms_ssim": list(1.0 - 1.0 / (10 * rate)), "nlpd": list(0.3 / rate)},
+        "jpegai": {"bpp": list(rate[2:7] / 1.4), "quality": list(range(5)), "n_images": 3,
+                   "ms_ssim": list(1.0 - 1.0 / (10 * rate[2:7])),
+                   "nlpd": list(0.3 / rate[2:7])},
+    }
+    direct = runbench.bdrate_report(curves, "jpeg", names, stub)
+    # 1/1.4 - 1 = -28.571: the ladder uses exactly 1.4x fewer bits at equal quality.
+    # Not exact, and it should not be: the ladder's knots are the anchor's knots 2..6,
+    # and PCHIP's derivative at a knot depends on its neighbours, so the anchor -- which
+    # has knots beyond both ends of the overlap -- has slightly different slopes there.
+    # 0.07 points on 28.6 is that effect, and it shrinks as points are added.
+    assert abs(direct["jpegai"]["AVG"] + 28.571) < 0.15, direct["jpegai"]["AVG"]
+
+    real_results = runbench.RESULTS
+    with tempfile.TemporaryDirectory() as tmp:
+        runbench.RESULTS = Path(tmp)
+        try:
+            (Path(tmp) / "b.json").write_text(json.dumps(
+                {"dataset": "tst", "n_images": 3, "metrics": names,
+                 "anchor": "jpeg", "curves": curves}))
+            assert runbench.rerender("b", None, None) == 0
+            assert (Path(tmp) / "b.md").exists()
+            assert (Path(tmp) / "b.png").stat().st_size > 1000
+
+            # Same numbers, reached the cheap way.
+            again = runbench.bdrate_report(
+                json.loads((Path(tmp) / "b.json").read_text())["curves"],
+                "jpeg", names, stub)
+            for m in names + ["AVG"]:
+                assert again["jpegai"][m] == direct["jpegai"][m], m
+
+            # A 5-point ladder inside an 8-point sweep is thin, and the markdown
+            # has to say so rather than presenting the AVG as fully comparable.
+            assert "Caveat" in (Path(tmp) / "b.md").read_text()
+
+            # Both failure modes report rather than fabricate.
+            assert runbench.rerender("absent", None, None) == 1
+            assert runbench.rerender("b", "not-a-codec", None) == 1
+        finally:
+            runbench.RESULTS = real_results
 
 
 # ---------------------------------------------------------------------------

@@ -12,11 +12,11 @@ BD-rate is interpolated with a monotone PCHIP over the *shared* quality range, n
 |---|---|---|---|---|---|---|---|---|---|
 | webp | **-10.6%** | -13.3% | -24.0% | -3.4% | -1.7% | -20.0% | -1.8% | -10.2% | 9/11 |
 | avif | **-36.1%** | -42.3% | -41.2% | -37.7% | -26.5% | -40.7% | -24.6% | -39.5% | 10/11 |
-| jpegai | **-0.4%** | -31.5% | -3.9% | -29.7% | +30.0% | +3.0% | +37.8% | -8.6% | 4/11 |
+| jpegai | **+1.8%** | -26.2% | -4.2% | -16.6% | +28.1% | +6.3% | +30.4% | -5.6% | 6/11 |
 
 `overlap` = how many of jpeg's rate points lie inside that codec's shared quality range. BD-rate averages over the overlap only, so a low count means the number rests on few anchor points.
 
-**Caveat:** `jpegai` (4/11) span only part of jpeg's range. Their AVG is not measured over the same ground as the other rows. The fix is lower-rate points in the ladder.
+**Caveat:** `jpegai` (6/11) span only part of jpeg's range. Their AVG is not measured over the same ground as the other rows. The fix is lower-rate points in the ladder.
 
 ## Rate points (dataset averages)
 
@@ -53,11 +53,11 @@ BD-rate is interpolated with a monotone PCHIP over the *shared* quality range, n
 | avif | 72 | 1.3224 | 0.9963 | 0.7222 | 0.9969 | 94.6200 | 0.0667 | 39.7390 | 0.9964 |
 | avif | 82 | 1.7552 | 0.9977 | 0.7886 | 0.9982 | 95.4293 | 0.0525 | 42.1284 | 0.9978 |
 | avif | 90 | 2.5073 | 0.9989 | 0.8811 | 0.9990 | 96.1103 | 0.0362 | 45.2048 | 0.9989 |
-| jpegai | 0.002 | 0.3614 | 0.9781 | 0.4099 | 0.9767 | 75.6136 | 0.1942 | 26.7065 | 0.9679 |
-| jpegai | 0.012 | 0.7601 | 0.9909 | 0.4953 | 0.9931 | 85.1854 | 0.1440 | 30.2993 | 0.9839 |
-| jpegai | 0.03 | 1.0710 | 0.9941 | 0.5409 | 0.9960 | 88.4221 | 0.1229 | 32.1565 | 0.9890 |
-| jpegai | 0.075 | 1.3140 | 0.9951 | 0.5583 | 0.9970 | 89.5078 | 0.1152 | 32.9598 | 0.9906 |
-| jpegai | 0.2 | 1.5168 | 0.9956 | 0.5655 | 0.9974 | 89.8424 | 0.1117 | 33.3873 | 0.9912 |
+| jpegai | 0.002 | 0.4833 | 0.9790 | 0.4248 | 0.9773 | 78.5183 | 0.1888 | 27.3522 | 0.9708 |
+| jpegai | 0.012 | 0.8870 | 0.9932 | 0.5357 | 0.9939 | 88.4400 | 0.1278 | 32.2715 | 0.9883 |
+| jpegai | 0.03 | 1.2707 | 0.9961 | 0.6045 | 0.9970 | 91.4325 | 0.0993 | 35.3771 | 0.9936 |
+| jpegai | 0.075 | 1.7473 | 0.9974 | 0.6580 | 0.9983 | 93.5429 | 0.0823 | 37.7363 | 0.9959 |
+| jpegai | 0.2 | 2.2802 | 0.9982 | 0.6996 | 0.9989 | 93.8225 | 0.0708 | 39.4149 | 0.9971 |
 
 ### PSNR BD-rate vs jpeg (diagnostic, not in AVG)
 
@@ -67,7 +67,7 @@ Separates the two branches: `psnr_y` is the luma branch, `psnr_u`/`psnr_v` the c
 |---|---|---|---|---|
 | webp | -33.2% | -31.6% | -33.3% | -34.8% |
 | avif | -47.3% | -43.7% | -59.1% | -56.9% |
-| jpegai | +28.1% | +48.6% | -43.2% | -37.8% |
+| jpegai | +14.0% | +28.2% | -54.6% | -47.0% |
 
 ## PSNR (dB, reported only -- never part of AVG)
 
@@ -104,8 +104,8 @@ Separates the two branches: `psnr_y` is the luma branch, `psnr_u`/`psnr_v` the c
 | avif | 72 | 1.3224 | 38.08 | 40.26 | 44.72 | 44.73 |
 | avif | 82 | 1.7552 | 39.61 | 42.44 | 45.39 | 45.45 |
 | avif | 90 | 2.5073 | 41.42 | 46.01 | 45.81 | 45.91 |
-| jpegai | 0.002 | 0.3614 | 28.34 | 28.81 | 40.96 | 40.30 |
-| jpegai | 0.012 | 0.7601 | 30.26 | 30.77 | 42.82 | 42.31 |
-| jpegai | 0.03 | 1.0710 | 31.34 | 31.93 | 43.59 | 42.82 |
-| jpegai | 0.075 | 1.3140 | 31.77 | 32.39 | 43.93 | 43.02 |
-| jpegai | 0.2 | 1.5168 | 31.98 | 32.63 | 43.96 | 43.14 |
+| jpegai | 0.002 | 0.4833 | 28.67 | 29.23 | 41.72 | 40.97 |
+| jpegai | 0.012 | 0.8870 | 31.59 | 32.20 | 44.30 | 43.85 |
+| jpegai | 0.03 | 1.2707 | 33.79 | 34.51 | 45.74 | 45.37 |
+| jpegai | 0.075 | 1.7473 | 35.38 | 36.20 | 46.76 | 46.48 |
+| jpegai | 0.2 | 2.2802 | 36.47 | 37.39 | 47.36 | 47.34 |

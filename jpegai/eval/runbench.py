@@ -254,6 +254,27 @@ def bdrate_report(curves: dict, anchor: str, metric_names: list[str], metrics_mo
     }
 
 
+def psnr_bdrate_report(curves: dict, anchor: str) -> dict:
+    """BD-rate on plain and per-plane PSNR. Diagnostic, never part of AVG.
+
+    The paper's seven metrics say whether the codec is competitive; these say *where*
+    it is not. `psnr_y` against `psnr_u`/`psnr_v` separates the luma and chroma
+    branches, which is the difference between "train longer" and "the luma branch
+    needs the context model" -- and none of the four saturates, so unlike the seven
+    they are immune to the interpolant trouble documented in docs/07 §5.4.
+
+    All four are higher-is-better, so no sign flip is needed.
+    """
+    if anchor not in curves:
+        return {}
+    fields = [f for f in _EXTRA_FIELDS if all(f in c for c in curves.values())]
+    if not fields:
+        return {}
+    a = curves[anchor]
+    return {name: bd_rate_table(a, c, fields)
+            for name, c in curves.items() if name != anchor}
+
+
 def write_markdown(path: Path, label: str, curves: dict, report: dict,
                    anchor: str, metric_names: list[str]) -> None:
     n = next(iter(curves.values()))["n_images"]
@@ -266,14 +287,36 @@ def write_markdown(path: Path, label: str, curves: dict, report: dict,
         "AVG is the unweighted mean of the per-metric BD-rates, matching the paper's "
         "Tables III-VI (verified in docs/05).",
         "",
+        "BD-rate is interpolated with a monotone PCHIP over the *shared* quality range, "
+        "not a global cubic -- see `jpegai/eval/bdrate.py` for why that choice changes "
+        "answers by tens of percent on the saturating metrics.",
+        "",
         "## BD-rate vs " + anchor,
         "",
-        "| codec | AVG | " + " | ".join(metric_names) + " |",
-        "|---|---|" + "---|" * len(metric_names),
+        "| codec | AVG | " + " | ".join(metric_names) + " | overlap |",
+        "|---|---|" + "---|" * len(metric_names) + "---|",
     ]
     for name, row in report.items():
         cells = [f"{row.get(m, float('nan')):+.1f}%" for m in metric_names]
-        lines.append(f"| {name} | **{row['AVG']:+.1f}%** | " + " | ".join(cells) + " |")
+        got, tot = row.get("_coverage", (0, 0))
+        lines.append(f"| {name} | **{row['AVG']:+.1f}%** | " + " | ".join(cells)
+                     + f" | {got}/{tot} |")
+
+    # "overlap" is how many of the anchor's rate points fall inside the shared
+    # quality range. It is a caveat on the row, not a result, so it is explained
+    # here rather than left as a bare fraction.
+    thin = {n: r["_coverage"] for n, r in report.items()
+            if r.get("_coverage", (0, 0))[1] and r["_coverage"][0] < 0.7 * r["_coverage"][1]}
+    lines += ["",
+              f"`overlap` = how many of {anchor}'s rate points lie inside that codec's "
+              "shared quality range. BD-rate averages over the overlap only, so a low "
+              "count means the number rests on few anchor points."]
+    if thin:
+        names = ", ".join(f"`{n}` ({g}/{t})" for n, (g, t) in thin.items())
+        lines += ["",
+                  f"**Caveat:** {names} span only part of {anchor}'s range. Their AVG is "
+                  "not measured over the same ground as the other rows. The fix is "
+                  "lower-rate points in the ladder."]
 
     lines += ["", "## Rate points (dataset averages)", "",
               "| codec | quality | bpp | " + " | ".join(metric_names) + " |",
@@ -290,6 +333,19 @@ def write_markdown(path: Path, label: str, curves: dict, report: dict,
     extras = [f for f in _EXTRA_FIELDS
               if f not in metric_names and any(f in c for c in curves.values())]
     if extras:
+        psnr_bd = psnr_bdrate_report(curves, anchor)
+        if psnr_bd:
+            cols = [f for f in _EXTRA_FIELDS if all(f in c for c in curves.values())]
+            lines += ["", f"### PSNR BD-rate vs {anchor} (diagnostic, not in AVG)", "",
+                      "Separates the two branches: `psnr_y` is the luma branch, "
+                      "`psnr_u`/`psnr_v` the chroma one. None of these saturates, so they "
+                      "are the most robust rows in this file.", "",
+                      "| codec | " + " | ".join(cols) + " |",
+                      "|---|" + "---|" * len(cols)]
+            for name, row in psnr_bd.items():
+                cells = [f"{row[f]:+.1f}%" if f in row else "--" for f in cols]
+                lines.append(f"| {name} | " + " | ".join(cells) + " |")
+
         lines += ["", "## PSNR (dB, reported only -- never part of AVG)", "",
                   "| codec | quality | bpp | " + " | ".join(extras) + " |",
                   "|---|---|---|" + "---|" * len(extras)]
@@ -352,6 +408,96 @@ def plot_curves(path: Path, label: str, curves: dict, metric_names: list[str]) -
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def _rel(path: Path) -> str:
+    """Project-relative path for display, falling back to absolute.
+
+    `Path.relative_to` raises when the target is outside the project, which it is
+    whenever `RESULTS` has been pointed elsewhere. A crash while printing where a
+    file was written would be an absurd way to lose a finished benchmark.
+    """
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def print_report(report: dict, anchor: str, metric_names: list[str]) -> None:
+    """The console BD-rate table, including the thin-overlap caveat."""
+    print(f"\nBD-rate vs {anchor}   (negative = better)")
+    width = max(len(n) for n in report) if report else 6
+    print(f"  {'codec':{width}}  {'AVG':>8}   " + "  ".join(f"{m:>9}" for m in metric_names)
+          + "   overlap")
+    for name, row in report.items():
+        cells = "  ".join(f"{row.get(m, float('nan')):>+9.1f}" for m in metric_names)
+        got, tot = row.get("_coverage", (0, 0))
+        print(f"  {name:{width}}  {row['AVG']:>+8.1f}   {cells}   {got:2}/{tot}")
+
+    # BD-rate is an average over the *shared* quality range. A ladder that only
+    # reaches the top of the anchor's range is compared over a slice of it, and the
+    # answer then rests on a handful of anchor points. Saying so beats letting the
+    # AVG be read as if the curves covered the same ground.
+    thin = {n: r["_coverage"] for n, r in report.items()
+            if r.get("_coverage", (0, 0))[1] and r["_coverage"][0] < 0.7 * r["_coverage"][1]}
+    if thin:
+        print("\nNOTE: these curves span only part of the anchor's quality range, so their")
+        print("      BD-rate is an average over that slice, not over the whole sweep:")
+        for n, (got, tot) in thin.items():
+            print(f"        {n:{width}}  {got} of {tot} {anchor} points in the overlap")
+        print("      The fix is lower-rate points in the ladder, not a different anchor.")
+
+
+def print_psnr_report(psnr_bd: dict, anchor: str, curves: dict) -> None:
+    """The luma/chroma diagnostic table. Says *where* a codec loses, not whether."""
+    if not psnr_bd:
+        return
+    cols = [f for f in _EXTRA_FIELDS if all(f in c for c in curves.values())]
+    width = max(len(n) for n in psnr_bd)
+    print(f"\nPSNR BD-rate vs {anchor}   (diagnostic, not in AVG)")
+    print(f"  {'codec':{width}}  " + "  ".join(f"{f:>9}" for f in cols))
+    for name, row in psnr_bd.items():
+        print(f"  {name:{width}}  "
+              + "  ".join(f"{row[f]:>+9.1f}" if f in row else f"{'--':>9}" for f in cols))
+
+
+def rerender(stem: str, anchor_req: str | None, metrics_arg: str | None) -> int:
+    """Rebuild `results/<stem>.{md,png}` from `results/<stem>.json`, no encoding.
+
+    The JSON holds the measurement -- rate and metric values per codec per quality.
+    The markdown and the plot are renderings of it, and BD-rate is a pure function of
+    it. So when the *analysis* changes rather than the data (§5.4 of docs/07 replaced
+    the BD-rate interpolant), re-deriving the reports costs milliseconds and cannot
+    drift from the numbers that were actually measured, whereas re-running the
+    benchmark costs hours and needs every codec and image still present.
+    """
+    src = RESULTS / f"{stem}.json"
+    if not src.exists():
+        print(f"no such benchmark: {_rel(src)}", file=sys.stderr)
+        return 1
+    saved = json.loads(src.read_text())
+    curves = saved["curves"]
+    label = saved.get("dataset", stem)
+    metric_names = ([m.strip() for m in metrics_arg.split(",") if m.strip()]
+                    if metrics_arg else saved["metrics"])
+
+    anchor = anchor_req or saved.get("anchor") or "jpeg"
+    if anchor not in curves:
+        print(f"anchor {anchor!r} not in {stem}.json ({', '.join(curves)})", file=sys.stderr)
+        return 1
+
+    report = bdrate_report(curves, anchor, metric_names, _load_metrics())
+    out_md, out_png = RESULTS / f"{stem}.md", RESULTS / f"{stem}.png"
+    write_markdown(out_md, label, curves, report, anchor, metric_names)
+    plot_curves(out_png, label, curves, metric_names)
+
+    print(f"re-rendered from {_rel(src)} "
+          f"({saved.get('n_images', '?')} images, {len(curves)} codecs, no re-encoding)")
+    print_report(report, anchor, metric_names)
+    print_psnr_report(psnr_bdrate_report(curves, anchor), anchor, curves)
+    print(f"\nwrote {_rel(out_md)}")
+    print(f"      {_rel(out_png)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m jpegai.eval.runbench",
@@ -370,7 +516,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="name (" + ", ".join(DATASETS) + ") or a directory path")
     ap.add_argument("--metrics", default=None,
                     help="comma-separated; default is the paper's seven")
-    ap.add_argument("--anchor", default="jpeg", help="BD-rate reference codec")
+    ap.add_argument("--anchor", default=None,
+                    help="BD-rate reference codec (default jpeg, or whatever the "
+                         "benchmark being re-rendered used)")
     ap.add_argument("--out", default=None, metavar="STEM",
                     help="write results/<STEM>.{json,md,png} instead of "
                          "results/bench_<dataset>. Give each ladder its own stem, or "
@@ -381,6 +529,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="show codecs/datasets and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="report the work that would be done, then exit")
+    ap.add_argument("--rerender", default=None, metavar="STEM",
+                    help="recompute results/<STEM>.{md,png} from the stored "
+                         "results/<STEM>.json without re-encoding anything. For when "
+                         "the analysis changed and the measurement did not")
     args = ap.parse_args(argv)
 
     if args.list:
@@ -394,6 +546,9 @@ def main(argv: list[str] | None = None) -> int:
             except FileNotFoundError:
                 print(f"  {name:12}  --  missing    {rel}")
         return 0
+
+    if args.rerender:
+        return rerender(args.rerender, args.anchor, args.metrics)
 
     label, root = resolve_dataset(args.dataset)
     images = list_images(root, args.limit)
@@ -455,6 +610,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     RESULTS.mkdir(parents=True, exist_ok=True)
+    anchor_req = args.anchor or "jpeg"
     # `label` still names the dataset inside the files and on the plot; only the
     # filename stem moves, so four ladders can be measured without each run
     # overwriting the previous one's table.
@@ -462,12 +618,12 @@ def main(argv: list[str] | None = None) -> int:
     out_json = RESULTS / f"{stem}.json"
     out_json.write_text(json.dumps(
         {"dataset": label, "root": str(root), "n_images": len(images),
-         "metrics": metric_names, "anchor": args.anchor, "curves": curves},
+         "metrics": metric_names, "anchor": anchor_req, "curves": curves},
         indent=1))
 
-    anchor = args.anchor if args.anchor in curves else chosen[0].name
-    if anchor != args.anchor:
-        print(f"\nanchor {args.anchor!r} unavailable; using {anchor!r}", file=sys.stderr)
+    anchor = anchor_req if anchor_req in curves else chosen[0].name
+    if anchor != anchor_req:
+        print(f"\nanchor {anchor_req!r} unavailable; using {anchor!r}", file=sys.stderr)
     report = bdrate_report(curves, anchor, metric_names, metrics_mod)
 
     out_md = RESULTS / f"{stem}.md"
@@ -475,16 +631,12 @@ def main(argv: list[str] | None = None) -> int:
     out_png = RESULTS / f"{stem}.png"
     plot_curves(out_png, label, curves, metric_names)
 
-    print(f"\nBD-rate vs {anchor}   (negative = better)")
-    width = max(len(n) for n in report) if report else 6
-    print(f"  {'codec':{width}}  {'AVG':>8}   " + "  ".join(f"{m:>9}" for m in metric_names))
-    for name, row in report.items():
-        cells = "  ".join(f"{row.get(m, float('nan')):>+9.1f}" for m in metric_names)
-        print(f"  {name:{width}}  {row['AVG']:>+8.1f}   {cells}")
+    print_report(report, anchor, metric_names)
+    print_psnr_report(psnr_bdrate_report(curves, anchor), anchor, curves)
 
-    print(f"\nwrote {out_json.relative_to(PROJECT_ROOT)}")
-    print(f"      {out_md.relative_to(PROJECT_ROOT)}")
-    print(f"      {out_png.relative_to(PROJECT_ROOT)}")
+    print(f"\nwrote {_rel(out_json)}")
+    print(f"      {_rel(out_md)}")
+    print(f"      {_rel(out_png)}")
     return 0
 
 

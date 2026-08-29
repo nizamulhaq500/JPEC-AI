@@ -304,17 +304,36 @@ rather than discovering in the plot.
 
 ### 5.2 Ladder #0's BD-rate, and the measurement that explains it
 
-Run on 2026-08-28, 24 Kodak images, all seven metrics, JPEG anchor:
+Run on 2026-08-28, 24 Kodak images, all seven metrics, JPEG anchor. The numbers below are
+the **corrected** ones — this table was first published with a global-cubic interpolant
+that was wrong by tens of percent, and §5.4 is the post-mortem:
 
-| codec | AVG | ms_ssim | vif | fsim | vmaf | nlpd | psnr_hvs | iw_ssim |
-|---|---|---|---|---|---|---|---|---|
-| webp | −15.3 | −17.6 | −24.2 | −16.2 | −8.3 | −19.9 | −1.8 | −18.9 |
-| avif | −41.0 | −48.8 | −41.4 | −49.2 | −33.3 | −40.9 | −24.6 | −48.5 |
-| **jpegai (ladder #0)** | **+15.6** | −9.4 | −0.3 | +5.6 | +46.6 | +9.6 | +40.5 | +16.3 |
+| codec | AVG | ms_ssim | vif | fsim | vmaf | nlpd | psnr_hvs | iw_ssim | overlap |
+|---|---|---|---|---|---|---|---|---|---|
+| webp | −10.6 | −13.3 | −24.0 | −3.4 | −1.7 | −20.0 | −1.8 | −10.2 | 9/11 |
+| avif | −36.1 | −42.3 | −41.2 | −37.7 | −26.5 | −40.7 | −24.6 | −39.5 | 10/11 |
+| **jpegai (ladder #0)** | **−0.4** | −31.5 | −3.9 | −29.7 | +30.0 | +3.0 | +37.8 | −8.6 | 4/11 |
 
-**Ladder #0 loses to JPEG.** It wins on MS-SSIM (−9.4%), ties VIF, and loses badly on
-VMAF and `psnr_hvs`. The anchor numbers reproduced (−15.3 / −41.0 against the −16.5 /
-−42.2 measured earlier on a different image subset), so the harness is not at fault.
+**On the paper's seven-metric average ladder #0 ties JPEG, and on fidelity it loses badly.**
+It beats JPEG comfortably on the four structural/perceptual metrics (`ms_ssim` −31.5,
+`fsim` −29.7, `iw_ssim` −8.6, `vif` −3.9) and loses by about as much on the two that track
+pixel error (`vmaf` +30.0, `psnr_hvs` +37.8). Those cancel, which is why the AVG sits at
+zero — an average of two opposed effects, not a codec that is uniformly competitive.
+
+The metrics that are *not* in the paper's seven say it plainly, and they are the reason the
+rest of this section exists:
+
+| | BD-rate | at matched rate |
+|---|---|---|
+| `psnr_y` | **+48.6%** | −1.99 dB |
+| `psnr_u` | −43.2% | +2.07 dB |
+| `psnr_v` | −37.8% | +1.57 dB |
+| `psnr` | +28.1% | −1.28 dB |
+
+**Luma is the problem and chroma is already winning.** Note also `overlap`: our five points
+span only the bottom 4 of JPEG's 11 quality levels, so every number in the first table is
+an average over the low-rate end of the sweep, where a learned codec is at its strongest.
+That is a ceiling symptom, not a strength — read it together with what follows.
 
 The RD points say where it goes wrong. Ours against JPEG at matched rate:
 
@@ -369,6 +388,180 @@ was running the *headline* ladders at it. `full.yaml` already holds the paper's 
 Tier A, every gate on it is clean, and the three measurements above are a better piece of
 evidence than a curve that happened to work: the bottleneck was located, not guessed.
 
+### 5.3 Ladder #1 confirms it: +2.12 dB at matched rate
+
+`ladder_p5` (`twobranch-split`, `--tier full`, 5 × 50k steps) finished 2026-08-29. Both
+ladders validate on the same 100 DIV2K images at the same step count, so their summary
+columns compare directly — and the second and third rows below are the measurement that
+settles §5.2, because they are at the *same rate*:
+
+| β | ladder #0 — Tier A | ladder #1 — tier full | Δ psnr |
+|---|---|---|---|
+| 0.002 | 0.3012 bpp → 28.75 dB | 0.4417 bpp → 29.03 dB | +0.28 |
+| 0.012 | 0.6462 → 30.92 | 0.7225 → 31.80 | +0.88 |
+| 0.03 | 0.9144 → 32.07 | 0.9831 → 33.52 | +1.45 |
+| 0.075 | 1.1533 → 32.53 | **1.3445 → 34.83** | +2.30 |
+| 0.2 | **1.3525 → 32.71** | 1.7752 → 35.81 | +3.10 |
+
+Read the two bold rows against each other: **1.3525 bpp → 32.71 dB versus 1.3445 bpp →
+34.83 dB**, so at the same rate tier full is worth **+2.12 dB**. That is not an
+extrapolation from the quantiser-disabled ceiling in §5.2 — it is a real bitstream at a
+matched rate.
+
+The saturation is equally visible. From β=0.03 to β=0.2, ladder #0 buys **0.64 dB for 48%
+more rate**; ladder #1 buys **2.29 dB**. Ladder #0's last three points are the 32.3 dB wall
+drawn in its own summary table. §5.2's diagnosis was right, and the fix was the tier.
+
+**Ladder #1's own BD-rate on Kodak**, same 24 images and same JPEG anchor as §5.2:
+
+| codec | AVG | ms_ssim | vif | fsim | vmaf | nlpd | psnr_hvs | iw_ssim | overlap |
+|---|---|---|---|---|---|---|---|---|---|
+| **jpegai (ladder #1)** | **+1.8** | −26.2 | −4.2 | −16.6 | +28.1 | +6.3 | +30.4 | −5.6 | 6/11 |
+
+The AVG moved the *wrong* way against ladder #0's −0.4, and that comparison is invalid —
+see §5.4. What is valid is the per-metric structure at a wider overlap, and the luma/chroma
+split against §5.2's:
+
+| | ladder #0 (tier A) | ladder #1 (tier full) | at matched rate |
+|---|---|---|---|
+| `psnr_y` | +48.6% | **+28.2%** | −1.46 dB |
+| `psnr_u` | −43.2% | **−54.6%** | +2.84 dB |
+| `psnr_v` | −37.8% | **−47.0%** | +2.48 dB |
+| `psnr` | +28.1% | **+14.0%** | −0.72 dB |
+
+Tier full **halved the luma deficit** (+48.6 → +28.2%) and widened an already large chroma
+lead. Overall plain-PSNR BD-rate went +28.1 → +14.0%. Every one of these is a fidelity
+metric, none of them saturates, and none of them was affected by the §5.4 bug — so this is
+the cleanest read available on what the tier change bought.
+
+Against the anchors on the same axis, which is what makes the split concrete:
+
+| | `psnr_y` | `psnr_u` | `psnr_v` |
+|---|---|---|---|
+| webp | −31.6% | −33.3% | −34.8% |
+| avif | −43.7% | −59.1% | −56.9% |
+| **ladder #1** | **+28.2%** | **−54.6%** | **−47.0%** |
+
+Our **chroma is already at AVIF's level** and comfortably past WebP's. Our **luma is behind
+JPEG**, in a field where both anchors are 30–44% ahead of it. Nothing about the training
+recipe or the entropy coder is specific to one plane, so a 75-point spread between the two
+branches is a statement about the branches themselves.
+
+It also says exactly where the remaining deficit lives. **Luma is the weak branch**, by
+1.46 dB at matched rate, while chroma is 2.5–2.8 dB ahead. That is precisely what ladder #3
+attacks: `twobranch-mcm` adds the multi-stage context model to `branch_y` only (28 fresh
+tensors, all under `branch_y.mcm`, confirmed in its warm-start log). The 4–9% claim it has
+to clear is a *relative* one against ladder #1, and the metric that has room to move it is
+`psnr_y`.
+
+Both tables above now come out of `runbench` directly, under
+**`PSNR BD-rate vs jpeg (diagnostic, not in AVG)`**, so they do not have to be recomputed by
+hand for each ladder.
+
+Two gate warnings on this ladder, and they are a separate bug that does not touch the
+numbers above:
+
+```
+WARNING: the coder/table gate failed at beta 0.002 (-3.30%)
+WARNING: a stream disagrees with its own entropy table at beta 0.012 (z_uv +104 B, +4.9%),
+         0.03 (z_uv +109 B, +9.5%)
+```
+
+The named stream is `z_uv`, the *chroma* hyper-latent, and the gate history across all four
+ladders points at the same place:
+
+| ladder | model | `gap_q` per β |
+|---|---|---|
+| `ladder` | mean-scale | +0.31 +0.17 +0.04 +0.05 +0.04 |
+| `ladder_cpu3k` | mean-scale | +0.29 +0.21 +0.13 |
+| `ladder_tb3k` | twobranch | **+1.29 +1.85 +2.24** |
+| `ladder_p5` | twobranch-split | **−3.30** +0.28 +0.20 +0.05 +0.03 |
+
+Both mean-scale ladders pass at every point; both two-branch ladders fail. So it is the
+chroma-branch hyper entropy model's `update()` disagreeing with its `forward()`, not the
+rANS layer and not a rate-dependent effect — `ladder_tb3k` fails at *every* β, including
+ones where `ladder` passes at the same β.
+
+Why it does not invalidate ladder #1: `exact` is `True` at all five points, so the coder is
+lossless and the psnr column is exact; and BD-rate is computed from **bytes actually
+written**, never from the estimate. The gate compares actual against what the model
+predicted, and it is the actual that is reported. A mismatch means the model is
+miscalibrated, not that the curve is wrong. It also cancels in Phase 6's claim, which is
+measured with `--anchor ours-ladder_p5` and so shares the bug on both sides.
+
+### 5.4 The BD-rate harness was wrong, and both headline numbers moved
+
+Ladder #1's first reported AVG was **+20.6%**, and ladder #0's was **+15.6%**. Both were
+artefacts of the interpolant, not of the codec. Corrected:
+
+| | as first reported | corrected | overlap |
+|---|---|---|---|
+| ladder #0, tier A | +15.6% | **−0.4%** | 4/11 |
+| ladder #1, tier full | +20.6% | **+1.8%** | 6/11 |
+| webp | −15.3% | −10.6% | 9/11 |
+| avif | −41.0% | −36.1% | 10/11 |
+
+**How it was caught.** `fsim` read **+56.0%** for ladder #1 — meaning we supposedly need 56%
+more bits than JPEG for the same FSIM. Hand-interpolating JPEG's `fsim` curve at our five
+quality levels showed we use *fewer* bits at every one of them. A sign error that large is
+not a tuning question, so the interpolant was the suspect.
+
+**The cause.** `bdrate.py` fitted one cubic polynomial to (quality → log rate) across each
+codec's whole range, then integrated over the overlap. That is Bjøntegaard's original 2001
+recipe and it is fine for PSNR, which really is close to cubic in log-rate. It is not fine
+for the four *saturating* metrics in the paper's seven: `ms_ssim`, `fsim` and `iw_ssim` all
+crowd into the last 1% of their range, so quality is near-vertical in log-rate at the top
+and gentle at the bottom. One cubic cannot be both. And because a global fit is global,
+anchor points **outside** the integration window pull the polynomial **inside** it — so with
+only partial overlap, JPEG's 3.7 bpp point was helping decide a number computed at 1 bpp.
+
+**The fix.** Monotone piecewise cubic (PCHIP), which interpolates the measured points
+exactly, never overshoots between them, and is local — a point outside the overlap cannot
+influence the integral inside it. It is what the JVET common test conditions moved to, for
+this reason. Three interpolants on ladder #1:
+
+| metric | global cubic | PCHIP | linear |
+|---|---|---|---|
+| `fsim` | **+56.0%** | −16.6% | −11.0% |
+| `ms_ssim` | −1.1% | −26.2% | −21.5% |
+| `iw_ssim` | +12.5% | −5.6% | −1.9% |
+| `psnr_hvs` | +30.9% | +30.4% | +30.6% |
+
+Two independent local methods agree to a few percent; the cubic is the outlier, and *only*
+where the curve saturates. `psnr_hvs` does not saturate and is stable across all three —
+which is why every fidelity number in §5.2 and §5.3 survived unchanged, and why the width
+diagnosis never depended on the broken code.
+
+**The regression test is an invariance, not a golden value.** Four synthetic anchor sweeps
+that pass through the integration window identically and differ only in how far *below* it
+they extend must give the same BD-rate; the truth is −50% by construction. PCHIP spreads
+**0.04** points across the four and lands within 0.2 of −50; the cubic spreads **17.08**.
+That is in `tests/test_eval.py` and in `python -m jpegai.eval.bdrate`, which keeps the old
+cubic as an executable footnote so the comparison stays runnable.
+
+**Re-deriving the reports cost nothing.** The JSON holds the measurement — bpp and every
+metric, per codec per quality — and BD-rate is a pure function of it, so a changed
+*analysis* does not need a changed *measurement*:
+
+```bash
+.venv/bin/python -m jpegai.eval.runbench --rerender bench_p5
+```
+
+That rewrites `results/bench_p5.{md,png}` in about a second, with no encoding, no metric
+computation, and no need for libjpeg/webp/avif or the images to still be present. A test
+asserts it produces the same numbers as the full run, so the cheap path cannot silently
+become a second, different answer.
+
+**What is still not fixed: overlap.** The `overlap` column is new and it is the real
+remaining caveat. Ladder #1's five points cover 6 of JPEG's 11 quality levels, ladder #0's
+cover 4 — so each AVG is an average over its own slice of the sweep, and **the two are not
+comparable to each other**. Ladder #0's −0.4 looks better than ladder #1's +1.8 only
+because ladder #0's slice is narrower and sits lower, where learned codecs win. This is why
+§5.3 compares the two ladders at *matched rate* instead, and why `runbench` now prints a
+`thin` warning under 70% coverage. The fix is lower-β ladder points, not a different
+interpolant: our lowest Kodak point is 0.4833 bpp against JPEG's 0.2555 and AVIF's 0.1119.
+Two extra points at β ≈ 0.0005 and 0.001 would bring coverage to roughly 9/11.
+
 ---
 
 ## 6. If something goes wrong
@@ -382,13 +575,15 @@ evidence than a curve that happened to work: the bottleneck was located, not gue
 | `nan` loss | learning rate or a bad batch | send `checkpoints/*/nan.pt` and the log |
 | `vs est_q` drifts past ±0.5% | entropy tables and coder disagree | send the log — this is a real bug, not tuning |
 | BD-rate is `nan` | fewer than 4 points, or no rate overlap | train more points, or widen the β range |
+| `NOTE: these curves span only part of the anchor's quality range` | the ladder's top β does not reach the anchor's top quality | train **lower**-β points; the number printed is still honest, but it averages over a slice — see §5.4 |
+| a BD-rate whose sign is impossible | you are on a pre-2026-08-29 checkout with the global-cubic fit | pull §5.4's `bdrate.py`; verify with `python -m jpegai.eval.bdrate` |
 
 ---
 
 ## 7. What is outstanding, and what it costs (as of 2026-08-28)
 
 Phases 3–6 are all built, and every criterion that can be checked without trained
-weights is checked: 326 pytest tests, 210 self-test checks, 215 with a checkpoint. What
+weights is checked: 331 pytest tests, 210 self-test checks, 215 with a checkpoint. What
 is left in Phases 4, 5 and 6 is the same kind of thing in each case — an **RD
 comparison**, which is GPU time, not code.
 
@@ -412,8 +607,8 @@ Read the real `it/s` off the first log line rather than trusting the estimate.
 
 | # | ladder | `--model` | settles |
 |---|---|---|---|
-| 0 | `ladder` | `mean-scale` | Tier A Phase 3 — **done 2026-08-28, 5/5 clean, +15.6% vs JPEG; see §5.2** |
-| 1 | `ladder_p5` | `twobranch-split` | Phase 5's RD, **and it is the seed for #3** |
+| 0 | `ladder` | `mean-scale` | Tier A Phase 3 — **done 2026-08-28, 5/5 clean, −0.4% vs JPEG at 4/11 overlap; see §5.2** |
+| 1 | `ladder_p5` | `twobranch-split` | Phase 5's RD — **done 2026-08-29, +1.8% vs JPEG, +2.12 dB over #0 at matched rate; see §5.3.** Also the seed for #3 |
 | 2 | `ladder_p4` | `twobranch` | "two-branch beats single-branch at equal rate" (vs #6) |
 | 3 | `ladder_p6` | `twobranch-mcm` | "MCM gives 4–9% BD-rate over Phase 5"; `--warm-start-from checkpoints/ladder_p5` |
 | 4 | `ladder_p5f` | `twobranch-fused` | the single-hyper-decoder ablation |
@@ -500,6 +695,9 @@ The same shape gives Phase 4's claim (`--neural checkpoints/ladder_p3f,checkpoin
 `ladder_p6a` twice (`twobranch-mcm2` and `twobranch-mcm1`, each with its own `--name`).
 
 ### 7.2 What to check on the first tier-full point, before letting 100 h run
+
+> **Answered 2026-08-29: 35.81 dB, the first branch.** Full result in §5.3 — at matched
+> rate it is +2.12 dB over Tier A. The remaining ladders are worth their wall-clock.
 
 The whole point of moving tiers is the ceiling, so verify it moved. When
 `ladder_p5/beta0.2` finishes, its summary `psnr` should be **≥35 dB**. At Tier A the same

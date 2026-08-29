@@ -21,17 +21,30 @@ Phases 3–6 of the [14-phase plan](docs/03-implementation-plan.md) are built:
 | **Phase 5** | residual coding with split hyper decoders |
 | **Phase 6** | the 4-stage Multi-Context Model (§VI-D), coset order derived from WG1 reference software |
 
-Verification: **326 pytest tests**, **210 self-test checks** (215 with a checkpoint),
+Verification: **331 pytest tests**, **210 self-test checks** (215 with a checkpoint),
 7/7 of the paper's metrics live, and the coder gated to ±0.5% against its own entropy
 model at every rate point.
 
-**Measured result so far.** The first trained ladder (Tier A, 5 rate points × 50k steps)
-scores **+15.6% BD-rate against JPEG** on Kodak — i.e. worse than JPEG — and
-[docs/07 §5.2](docs/07-training-runbook.md) shows why with two measurements rather than a
-guess: with the quantiser *disabled* the transforms still top out at 32.30 dB, and block
-PCA at the same latent width tops out at 30.91 dB. The bottleneck is Tier A's 96 latent
-channels (an 8:1 dimensionality reduction), not the entropy coder and not the training
-length. Training at the paper's own 160/96 widths is in progress.
+**Measured result so far.** Two ladders are trained, each 5 rate points × 50k steps. On
+Kodak against JPEG, on the paper's seven-metric average, they score **−0.4%** (Tier A) and
+**+1.8%** (the paper's own 160/96 latent widths) — roughly level with JPEG, winning on the
+structural metrics (`ms_ssim` −26 to −32%, `fsim` −17 to −30%) and losing on the two that
+track pixel error (`vmaf` +28%, `psnr_hvs` +30%). Both figures were first reported ~17
+points worse, from a global-cubic BD-rate fit that is invalid for saturating metrics;
+[docs/07 §5.4](docs/07-training-runbook.md) is the post-mortem and the harness now uses
+monotone PCHIP with an invariance regression test.
+
+The tier change is measured directly rather than argued: at a matched 1.34 bpp it is worth
+**+2.12 dB**, and it halved the luma BD-rate deficit (`psnr_y` +48.6 → +28.2%). Tier A's
+ceiling was located with two measurements rather than a guess ([docs/07
+§5.2](docs/07-training-runbook.md)): with the quantiser *disabled* the transforms still top
+out at 32.30 dB, and block PCA at the same latent width tops out at 30.91 dB. So the
+bottleneck was Tier A's 96 latent channels (an 8:1 dimensionality reduction), not the
+entropy coder and not the training length.
+
+**Where the remaining deficit is.** Luma, by 1.46 dB at matched rate, against chroma which
+is already 2.5–2.8 dB *ahead* of JPEG. Phase 6's multi-stage context model attaches to the
+luma branch only, so that is the ladder now training.
 
 ## Read the docs in this order
 
@@ -70,7 +83,7 @@ Measure it against JPEG, WebP and AVIF through the same harness that produced th
 numbers:
 
 ```bash
-.venv/bin/python -m jpegai.eval.runbench --codecs jpeg,webp,avif --neural checkpoints/ladder_p6
+.venv/bin/python -m jpegai.eval.runbench --codecs jpeg,webp,avif --neural checkpoints/ladder_p6 --out bench_p6
 ```
 
 ## Layout
@@ -85,7 +98,7 @@ jpegai/
   data/        dataset loaders and the DIV2K zip salvage tool
   config/      tierA.yaml (development) and full.yaml (the paper's widths)
 docs/          the written study and the runbook
-tests/         326 tests
+tests/         331 tests
 ```
 
 ## What is not in this repo
