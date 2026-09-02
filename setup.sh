@@ -4,7 +4,7 @@
 #
 #   cd "/Users/nizam/JPEC AI" && bash setup.sh
 #
-# Everything here touches the network, which is why you run it and not Claude.
+# Everything here touches the network, so it has to run on your own machine.
 # Safe to re-run: each step is skipped if already done.
 # Total download is ~16 GB. Steps 3-5 can be interrupted and resumed.
 # ---------------------------------------------------------------------------
@@ -129,5 +129,5 @@ Next:
   python -m jpegai.data.prepare_crops     # one-time: 256x256 crop extraction
   python -m jpegai.eval.runbench --codecs jpeg,webp,avif --dataset kodak
 
-Then tell Claude what the summary above printed, especially any "missing".
+Read the summary above before going on, especially any "missing".
 EOF

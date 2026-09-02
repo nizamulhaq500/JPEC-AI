@@ -35,8 +35,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Local-machine editor/agent state, not project configuration
-.claude/settings.local.json
+# Local-machine editor state, not project configuration
 .DS_Store
 
 # Training writes these on failure; they are debugging artefacts, sometimes large
