@@ -579,26 +579,137 @@ def _package():
 
 _package()
 
-# ================== CELL 9 — the whole-ladder version, if hours allow =========
-# `ladder_p5_cont` in tier 2 gives the MCM attribution at ONE rate point, which is
-# enough to state the number. `ladder_p5_long` gives it at all five, which is what a
-# BD-rate needs -- the same control, but able to say "the MCM is worth X% of the rate"
-# instead of "+Y dB at 0.4 bpp". 250,000 steps, so run it only with hours to spare.
+# ============ CELL 9 — fill ladder_p6's rate hole (50k steps, ~40 min) ========
+# This closes the one real methodological weakness in the headline BD-rate.
+# ladder_p6 jumps beta 0.002 -> 0.012, which is 0.456 -> 0.963 bpp: a 2.1x hole
+# with FOUR of JPEG's eleven Kodak points inside it, so PCHIP interpolates the
+# neural curve straight across the anchor's densest region to produce the number.
+# One point at beta 0.005 (lambda*255^2 = 325, ~0.6 bpp) removes it.
 #
-# It needs all five seed checkpoints, not just beta0.012. On the Mac:
+# Running it HERE rather than on the Mac is defensible now that sweep_w6 has
+# landed: same model, tier, beta, batch, seed and step count as the Mac's
+# ladder_p6/beta0.012, and it came in at 0.9571 bpp / 32.58 dB against the Mac's
+# 0.9628 / 32.59 -- 0.6% cheaper at equal PSNR, so the CUDA and MPS paths agree
+# to 0.01 dB. One CUDA point in an MPS ladder costs far less than the hole does.
+# Say so in the report rather than hiding it.
+#
+# The warm start has to be ladder_p6/beta0.002, which is what --skip-done would
+# have chained from on the Mac. On the Mac:
+#
+#   .venv/bin/python cloud/make_seed.py --ladder checkpoints/ladder_p6 \
+#       --betas 0.002 --out cloud/seeds_p6
+#
+# then upload cloud/seeds_p6/seeds.tar.gz. Its NAME does not matter: this cell
+# reads the CONTENTS of every archive it can find and takes the one holding the
+# member it needs, which is also why the stale seeds.tar*.gz copies already in
+# the notebook folder cannot fool it.
+#
+# It calls loop.py directly for a single point instead of going through
+# runladder -- exactly how beta0.0005 and beta0.001 were trained -- so the
+# checkpoint lands inside the existing ladder_p6 tree. ladder.json is stale
+# afterwards by design; regenerate it on the Mac, as with those two.
+#
+# This is a 4th concurrent job against 4 vCPUs, i.e. back to tier 1's load. The
+# three tier-2 runs slow proportionally; nothing else changes.
+
+def _fill_hole():
+    import tarfile
+
+    want = "checkpoints/ladder_p6/beta0.002/final.pt"
+    seed = ROOT / want
+    log = ROOT / "logs" / "cloud_p6_hole.log"
+
+    if log.exists():
+        print(f"log exists, not relaunching (delete logs/{log.name} to force)")
+        return
+
+    if not seed.exists():
+        # Content-addressed rather than name-addressed: three stale seeds.tar*.gz
+        # are already sitting next to the notebook and none of them holds this
+        # member, so matching on the filename would pick the wrong archive.
+        cands = []
+        for d in {pathlib.Path.cwd(), ROOT, pathlib.Path("/root"),
+                  pathlib.Path("/tmp"), pathlib.Path.home()}:
+            cands += sorted(d.glob("*.tar*gz"))
+        cands += sorted(pathlib.Path("/tmp").glob("*/*.tar*gz"))
+        for c in cands:
+            try:
+                with tarfile.open(c) as t:
+                    names = t.getnames()
+            except Exception:
+                continue                      # not a tar, or a partial upload
+            if any(n.endswith("ladder_p6/beta0.002/final.pt") for n in names):
+                print(f"seed found inside {c}")
+                subprocess.run(["tar", "xzf", str(c), "-C", str(ROOT)], check=True)
+                break
+        else:
+            print(f"NO SEED for the hole point -- need {want} here.\n"
+                  f"  On the Mac:  .venv/bin/python cloud/make_seed.py "
+                  f"--ladder checkpoints/ladder_p6 --betas 0.002 --out cloud/seeds_p6\n"
+                  f"  then upload cloud/seeds_p6/seeds.tar.gz anywhere in the box.\n"
+                  f"  Scanned {len(cands)} archive(s); none held that member.\n"
+                  f"  Refusing to start cold: an unseeded point is not comparable to "
+                  f"the ladder it is joining, which is the entire purpose here.")
+            return
+
+    if not seed.exists():
+        print(f"extracted, but {want} is still missing -- the archive has a "
+              f"different internal layout than make_seed.py writes")
+        return
+
+    _HOLE_LAUNCH(want, log)
+
+
+def _HOLE_LAUNCH(want, log):
+    # A second runner beside cloud_run.py, because this one enters loop.main (a
+    # single rate point) rather than runladder.main (a whole ladder). Same two
+    # preambles: the in-RAM loader patch and cudnn autotuning, TF32 still off.
+    runner = ROOT / "cloud_point.py"
+    runner.write_text(
+        "import sys\n"
+        "import torch\n"
+        "import jpegai.train._inram          # noqa: F401  -- in-RAM loader patch\n"
+        "torch.backends.cudnn.benchmark = True\n"
+        "from jpegai.train.loop import main\n"
+        "sys.exit(main(sys.argv[1:]))\n")
+
+    # --name carries the beta subdirectory itself, which is the convention
+    # runladder uses (`f"{name}/beta{label}"`), so the checkpoint lands at
+    # checkpoints/ladder_p6/beta0.005/ and runbench picks it up with no flags.
+    argv = (f"--model twobranch-mcm --tier full --beta 0.005 --iterations 50000 "
+            f"--name ladder_p6/beta0.005 --warm-start {want} {COMMON}")
+    cmd = (f"setsid env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1 "
+           f"nohup {sys.executable} {runner.name} {argv} > {log} 2>&1 &")
+    subprocess.Popen(cmd, shell=True, cwd=ROOT)
+    print(f"launched ladder_p6/beta0.005  (lambda*255^2 = {0.005 * 255 ** 2:.0f}, "
+          f"expect ~0.6 bpp)  -> logs/{log.name}")
+    print("cell 7 will not show it -- it iterates JOBS. Tail it with:")
+    print("  print((ROOT / 'logs' / 'cloud_p6_hole.log').read_text()[-1500:])")
+
+
+_fill_hole()
+
+# ---- the other thing worth doing with spare hours -----------------------------
+# `ladder_p5_cont` in tier 2 gives the MCM attribution at ONE rate point, which is
+# enough to state the number. `ladder_p5_long` gives it at all five, which is what
+# a BD-rate needs -- the same control, but able to say "the MCM is worth X% of the
+# rate" instead of "+Y dB at 0.4 bpp". 250,000 steps, and it needs all five seed
+# checkpoints rather than one:
 #
 #   .venv/bin/python cloud/make_seed.py --all     # 720 MB of checkpoints -> ~240 MB
 #
-# upload that seeds.tar.gz, re-run cell 2b, then paste this as a cell of its own:
+# upload, re-run cell 2b, then paste this as a cell of its own:
 #
 #   def _long():
-#       sh("setsid env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 nohup "
+#       sh("setsid env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1 nohup "
 #          f"{sys.executable} cloud_run.py "
 #          "--model twobranch-split --tier full --name ladder_p5_long "
 #          "--warm-start-from checkpoints/ladder_p5 --iterations 50000 "
 #          f"{COMMON} > logs/cloud_ladder_p5_long.log 2>&1 &", cwd=ROOT)
 #   _long()
 #
-# Note there is no `--betas`: the default grid is already 0.002/0.012/0.03/0.075/0.2,
-# which is exactly what ladders #0-#2 used.
+# No --betas: the default grid is already 0.002/0.012/0.03/0.075/0.2, which is what
+# ladders #0-#2 used. It is second in line behind the hole point because 117ef49
+# already put the 4-stage MCM under 1%, so this refines a number known to be small,
+# at 5x the steps and 5x the upload.
 
