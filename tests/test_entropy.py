@@ -187,12 +187,44 @@ def test_bin_zero_of_every_row_is_the_symbol_the_offset_names():
     medians = [1.455, -1.170, 0.014, 1.257, -0.6, 0.9]
     eb = _prior(medians=medians, half_width=6.0)
     eb.update(force=True)
-    med = eb.quantiles.detach()[:, 0, 1]
-    minima = torch.clamp(torch.ceil(med - eb.quantiles.detach()[:, 0, 0]), min=0).int()
+    minima, maxima = eb._density_extent()
     assert torch.equal(eb._offset.cpu().int(), (-minima).cpu())
-    # And the row is wide enough to hold the range the quantiles claim.
-    maxima = torch.clamp(torch.ceil(eb.quantiles.detach()[:, 0, 2] - med), min=0).int()
+    # And the row holds exactly the range the extent claims.
     assert torch.equal(eb._cdf_len.cpu().int() - 2, (minima + maxima + 1).cpu())
+
+
+def test_the_table_reaches_every_symbol_the_density_puts_mass_on():
+    """`update` reads its extent off the density, so escapes are what the test
+    measures -- not the extent arithmetic that produces them.
+
+    A channel whose `median` sits away from its density's mode is the case that
+    broke: `forward` centres on `median`, so the symbols land near
+    ``mode - median`` while a row centred on zero cannot reach them. Below,
+    `median` is pushed up to 2 bins off a narrow density, which is the phase-6
+    `z_uv` signature (|median| ~ 1.8 against a 3-symbol row).
+    """
+    eb = _prior(channels=6, medians=[0.0] * 6, half_width=0.45)
+    with torch.no_grad():                     # move the medians off the mode
+        shift = torch.tensor([0.0, 1.9, -1.9, 2.4, -2.4, 0.6])
+        eb.quantiles[:, 0, :] += shift[:, None]
+    eb.update(force=True)
+
+    med = eb.medians().detach().reshape(1, -1, 1, 1)
+    torch.manual_seed(5)
+    # Data sits at the density's mode (0), not at `median`.
+    z = torch.randn(1, 6, 12, 12) * 0.2
+    table, escapes = _table_bits(eb, z)
+    assert escapes == 0, f"{escapes} symbols outside their row"
+
+    # And the bytes written stay close to the table's own estimate, which is the
+    # user-visible consequence: every escape costs an escape symbol plus a
+    # bypass-coded raw value, roughly 8 bits where the symbol was worth a fraction.
+    strings = eb.compress(z)
+    actual = sum(len(s) for s in strings) * 8
+    assert (actual - table) / table < 0.05, (
+        f"actual {actual / 8:.0f} B vs table {table / 8:.1f} B")
+    assert torch.equal(eb.decompress(strings, tuple(z.shape[-2:]), device=z.device),
+                       torch.round(z - med) + med)
 
 
 def test_a_real_round_trip_costs_what_the_table_says():

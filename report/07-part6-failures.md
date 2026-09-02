@@ -3,7 +3,7 @@
 # Part VI — Failures, Bugs and Errors
 
 *This part exists because §2.3 said the interesting word in our problem statement was "honestly".
-Six substantive correctness bugs were found. **Four of them produced plausible numbers rather than
+Seven substantive correctness bugs were found. **Five of them produced plausible numbers rather than
 crashes**, which is the only kind that is actually dangerous. Each one below gets the wrong number,
 the symptom that exposed it, the diagnosis, and the corrected number.*
 
@@ -183,13 +183,13 @@ finished model and glaring at 3,000 steps — which is the single strongest argu
 mid-training gate layer of §15.3. A gate that only runs at the end of training would never have
 found it.
 
-### 22.4 The `z_uv` chroma hyper gate failure — still open
+### 22.4 The `z_uv` chroma hyper gate failure — and the wrong diagnosis it carried for three days
 
-**Disclosed as an open defect, not a fixed one.**
+**Two failures here, and the second is the interesting one.** The defect is fixed. The diagnosis
+this report shipped for it was wrong, and it was wrong in the specific way that a plausible-sounding
+error message makes a reader stop looking.
 
-The same *class* of problem as §22.3, in the two-branch model's chroma hyper prior: `update()` and
-`forward()` disagree, so the coder writes bytes that are faithful to a table which is not the
-density the rate loss was trained against. The gate's own diagnostic says it in one line:
+**What the gate said.** For three days, on every failing point, the coder printed:
 
 ```
 ** z_uv disagrees with its own table by +104 B (+4.9%)
@@ -197,26 +197,60 @@ density the rate loss was trained against. The gate's own diagnostic says it in 
       the rate loss was trained against
 ```
 
-**The evidence localising it** is the four-ladder pattern of §18.3: both single-branch ladders pass
-the gate, both two-branch ladders fail it. The chroma hyper path is the only thing they do not
-share.
+That is a precise, testable claim: the table's implied bits should differ from `forward()`'s bits.
+Tested on 2026-09-01 (`ladder_p6/beta0.012`, `cdf_cost_bits` read straight off the coder's own
+quantised CDF), they **agree to −0.4%**. The excess was against *both* of them, so it could not have
+been a disagreement between them.
 
-**Magnitude:**
+**What it actually was.** Out-of-range escapes. `FactorizedPrior.update()` took each channel's table
+extent from the learned `quantiles`, which a **separate** optimiser (`aux_loss`) maintains. At 50,000
+steps that optimiser had not converged — `aux_loss` was 4.16 on the chroma bottleneck, 5.60 on the
+luma one — so `quantiles` was wrong twice over: `median` sat up to 2.3 away from the density's mode,
+so `forward`'s centred symbols were not centred on zero at all, and the interval was too narrow to
+reach where they landed. Two of 96 chroma channels ended up with `|median| ≈ 1.8` against a 3-symbol
+row `[−1, +1]` while their symbols reached ±2. Every one of those symbols paid an escape symbol plus
+a bypass-coded raw value — about 8 bits where an in-table rare symbol costs a fraction of one.
 
-| ladder | steps | failures |
-|---|---|---|
-| `ladder_tb3k` | 3,000 | +1.29% / +1.85% / +2.24% |
-| `ladder_p5` | 50,000 | −3.30% at β 0.002; `z_uv` +104 B (+4.9%) and +109 B (+9.5%) |
+The luma `z` stream never escaped. That is why the fault read as chroma-specific across four ladders
+and looked architectural.
 
-**Why it is not a correctness catastrophe:** `ŷ` remains bit-exact at every rate point in every
-ladder. The codec encodes and decodes correctly. What is wrong is *efficiency* — a few hundred bytes
-on a payload of tens of kilobytes, i.e. well under 1% of total rate — plus a −3.30% anomaly at the
-lowest rate point, where `z_uv` is a large fraction of a very small payload.
+**The fix** is `FactorizedPrior._density_extent()`: read the tail-mass points off the density itself
+rather than off `quantiles`, and take the extent from that. One MLP evaluation on a small integer
+grid, once per `update()`. Measured over all 24 Kodak images, per rate point of `ladder_p6`:
 
-**Why it is not yet fixed:** the fix requires the chroma hyper prior to expose a `coder_rows`
-accessor in the same way §6.4's σ path does, so the gate can interrogate the model for the exact
-table it will use rather than rebuilding it. That is a change to a module currently being trained
-against by `ladder_p6`; changing it mid-flight invalidates 11,000 steps. It is the first item in §27.
+| β | `z_uv` before | after | vs its own estimate | escapes | total payload |
+|---|---|---|---|---|---|
+| 0.002 | 36,244 B | **30,888 B** | +7.91% → **−8.03%** | 4,548 → **0** | **−1.107%** |
+| 0.012 | 19,240 B | **17,096 B** | +11.49% → **−0.93%** | 2,072 → **0** | **−0.198%** |
+| 0.03 | 16,656 B | **16,220 B** | +3.77% → **+1.06%** | 399 → **0** | **−0.028%** |
+| 0.075 | 12,196 B | 12,188 B | +1.36% → +1.29% | 0 → 0 | −0.000% |
+| 0.2 | 10,652 B | 10,652 B | +1.30% → +1.30% | 0 → 0 | +0.000% |
+
+Zero escapes on all eight ladder checkpoints checked, across five ladders. The gain concentrates at
+low rate, which is where BD-rate integration is most sensitive: −1.1% of total payload at β 0.002.
+The two 3,000-step probe ladders, which had no escapes to recover, pay **+0.02%** — about 25 bytes
+of CDF quantisation noise, and the only case where the change costs anything.
+
+**Nothing was retrained.** Decoded latents and `x̂` are bit-identical before and after — verified on
+8 Kodak images at two rate points — so this is a pure coder-side change. Every checkpoint stands;
+only the byte counts drop.
+
+**Three things were repaired alongside it, all of them "why did this hide":**
+
+1. `runladder`'s summary printed **one** `oor` column, and it was the luma one. `roundtrip_check` had
+   been computing `z_oor_pct` all along. That is how 0.93% chroma escapes sat behind a printed
+   `oor 0.000` for three days. The summary now prints `oor y` and `oor z` separately.
+2. The warning text now uses `oor` to *split* the two causes instead of asserting one of them: a
+   nonzero `oor` means the extent is wrong; `oor` at zero with a gap means the table's shape is
+   wrong. The old text named the second cause unconditionally.
+3. `NeuralCodec.fingerprint()` keyed the benchmark cache on checkpoint size and mtime only, so a
+   coder change left every cached rate stale against new code — the exact silent-wrong-number failure
+   that method exists to prevent, one level up. It now folds in a `CODER_VERSION` constant.
+
+**The lesson worth keeping.** The gate fired correctly, at the right stream, with the right
+magnitude. It was the *explanation* attached to the number that cost the time, because it was
+specific enough to sound measured and was never measured. A diagnostic message that names a cause
+should name the observation that would distinguish it — which is what the replacement does.
 
 ### 22.5 Every metric computed on RGB
 
@@ -375,7 +409,7 @@ window cannot change the answer. PCHIP 0.04, cubic 17.08 (§15.3). That single t
 bug and proved the fix.
 
 **4. Assert on real bytes, at every checkpoint, during training.** The round-trip gate (§15.2)
-caught §22.3 and localised §22.4. Two of six bugs were visible **only** through a mid-training gate
+caught §22.3 and localised §22.4. Two of seven bugs were visible **only** through a mid-training gate
 on actual bitstream sizes — invisible to unit tests, invisible to the loss curve, invisible in a
 converged model.
 
@@ -391,10 +425,15 @@ model that trains happily and is not JPEG AI.
 had. Only WG1's own source settled it. For anything defined externally, read the external
 definition.
 
-**8. Compare against the honest figure, not the flattering one.** The paper's headline is −16.2% on
-its own test set; the comparable figure for our dataset and decoder complexity is **−7.5%** (§8.4).
-Using the headline would have overstated our shortfall by 8.7 points and could have made a *correct*
-result look like a bug.
+**8. Compare against the honest figure, and check the anchor before you subtract.** The paper's
+headline is −16.2% on its own test set; the comparable figure for our dataset and decoder complexity
+is **−7.5%** (§8.4). Getting *that* right was the easy half. The half we got wrong for weeks is that
+−7.5% is a BD-rate **against VVC Intra** while every number we produce is against JPEG, so the
+difference between them is not a quantity. We nonetheless printed it as one — "about 8 percentage
+points short" — in the executive summary, in §4.3, in §19.1 and in the closing statement, because
+both numbers were correct, both were in percent, and nothing in a table of percentages announces
+that two of its rows have different denominators. Converted properly the gap is **~32 points**
+(§19.1.2). A unit error hides best among numbers that all share the same unit.
 
 **9. Measure bounds before hunting bugs.** Tier A's saturation looked exactly like a defect. Two
 cheap measurements — quantiser off, and PCA at the same width — proved it was a hard capacity limit

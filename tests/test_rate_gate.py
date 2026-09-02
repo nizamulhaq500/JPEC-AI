@@ -233,10 +233,17 @@ def test_the_aggregate_gate_alone_understates_it():
     error by all four streams' bits. Scale the model up, or the image, and that
     fraction shrinks further while the fault stays identical -- which is exactly how
     the real bug read +1.85% overall while one stream was +63%.
+
+    The factor is bounded below rather than pinned, because it is set by `z_uv`'s
+    share of the total bits, and on a fixture this small that share is ~26% where on
+    a real image it is under 2%. The margin also moved once `update` began taking the
+    union of the quantile- and density-derived extents: the injected `_offset` shift
+    is diluted by a wider row, so the same fault reads +237% / +61% (3.9x) here where
+    it read over 4x against the 3-symbol row the quantile-derived extent produced.
     """
     m = _shift_uv_table(_two_branch(uv_init_scale=0.5), 2)
     rt = roundtrip_check(m, _valid(), torch.device("cpu"))
-    assert rt["gap_z_uv_pct"] > 4 * abs(rt["gap_q_pct"]), (
+    assert rt["gap_z_uv_pct"] > 3 * abs(rt["gap_q_pct"]), (
         f"per-stream {rt['gap_z_uv_pct']:+.2f}% vs aggregate {rt['gap_q_pct']:+.2f}%")
 
 

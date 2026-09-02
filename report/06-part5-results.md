@@ -111,8 +111,8 @@ upper bound.
 
 ## 18. Ladder by ladder
 
-Five ladders have been run. Two are 50,000-step results; two are 3,000-step smoke tests that exist
-to validate the pipeline, not to produce numbers; one is in flight.
+Six runs. Three are complete 50,000-step ladders; two are 3,000-step smoke tests that exist to
+validate the pipeline, not to produce numbers; one is a two-point MCM control.
 
 ### 18.1 `ladder` — #0, mean-scale hyperprior, tier A
 
@@ -165,13 +165,15 @@ WARNING: a stream disagrees with its own entropy table at
 
 `ŷ` is still bit-exact at every point — the codec is *correct*, the bytes decode to exactly what
 was encoded. What is wrong is narrower and it is diagnosed in §22.4: the **chroma hyper stream's**
-`update()`-built tables do not match the density its `forward()` rate loss was trained against.
-The gate's own message says it precisely:
+tables did not reach far enough to hold the symbols the model actually produced, so those symbols
+were escape-coded at roughly 8 bits each. The gate's message as printed at the time named the wrong
+cause:
 
 > the coder is faithful to a table that is not the density the rate loss was trained against
 
-The cost is bounded and small — `z_uv` is a few hundred bytes on a payload of tens of kilobytes —
-but it is a real open defect and it is listed as one.
+That reading was tested and disproved on 2026-09-01 — the table's bits and `forward()`'s bits agree
+to −0.4% — and both the diagnosis and the message have been corrected. The defect is **fixed**;
+§22.4 gives the measurement.
 
 **The gain over ladder #0, per β:**
 
@@ -229,7 +231,9 @@ test that "wasted" an hour of CPU paid for itself by making that table possible.
 Note also that the failure is *larger* at 3,000 steps (+2.24%) than at 50,000 (+0.20%). The
 mismatch shrinks as the model converges, which is why it is nearly invisible in a finished model
 and glaring in a partly-trained one — and why the mid-training gate layer of §15.3 is the only
-layer that could have caught it.
+layer that could have caught it. §22.4 explains why convergence is the axis: the table extent was
+read off `quantiles`, which a separate optimiser drives toward the density's tail points, so the
+extent is only correct once *that* optimiser has converged. It had not, at 50,000 steps or at 3,000.
 
 ### 18.4 The monochrome fast path
 
@@ -255,26 +259,67 @@ property of the architecture, not an approximation.
 **This table was first published from a randomly initialised model** and reported −33.2%. §21.2 is
 that error.
 
-### 18.5 `ladder_p6` — in flight
+### 18.5 `ladder_p6` — #2, the 4-stage Multi-Context Model
 
-`twobranch-mcm`, tier full, warm-started from `ladder_p5`. At the time of writing it is **11,000 of
-50,000 steps into its first rate point**, roughly 5.5 h remaining on that point and about 30 h on
-the ladder.
+`twobranch-mcm`, tier full, warm-started from `ladder_p5`. Complete: five points, 35.0 h.
 
-```
- 11,000/50,000  loss 0.9545  bpp 0.4849  psnr 28.00  aux 60.55
-   lr 1.00e-04   1.98 it/s   eta 5.46 h
-   Y/U/V 29.12/37.29/37.29   chroma 25.0%
-```
+| β | λ·255² | steps | est bpp | **act bpp** | **PSNR** | gap_q | oor_y | `ŷ` exact | worst stream |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.002 | 130 | 50,000 | 0.4561 | **0.3609** | **29.45** | −0.14% | 0.00000% | ✓ | `z_uv` +1.09% |
+| 0.012 | 780 | 50,000 | 0.9628 | **0.7045** | **32.59** | +0.19% | 0.00000% | ✓ | `z_uv` +5.63% |
+| 0.03 | 1951 | 50,000 | 1.3925 | **1.0056** | **34.12** | +0.06% | 0.00027% | ✓ | `z_uv` +2.44% |
+| 0.075 | 4877 | 50,000 | 1.9232 | **1.3959** | **35.29** | +0.04% | 0.00027% | ✓ | `y_uv` +0.06% |
+| 0.2 | 13005 | 50,000 | 2.5575 | **1.8832** | **36.45** | +0.02% | 0.00027% | ✓ | `z_uv` +0.03% |
 
-Health checks all pass: `ŷ` exact, `oor` 0.000%, and the loss is descending. At 11,000 steps it is
-already at **28.00 dB** where `ladder_p5`'s finished β = 0.002 point reached 29.03 dB, which is a
-reasonable trajectory for a warm start.
+This is the project's best ladder: **−9.2% BD-rate against JPEG** (§19.1), and the only one ahead of
+a shipped codec. Against `ladder_p5` at matched β:
 
-The `Y/U/V 29.12/37.29/37.29` breakdown is the number worth watching, and it restates the project's
-central finding in a single line: **chroma is 8 dB better than luma.** Chroma consumes 25.0% of the
-bits and is 8 dB ahead. That is not a balance any sensible rate allocation would choose, and it is
-why the MCM — attached to the luma branch only — is the right next tool.
+| β | p5 act bpp → p6 | p5 PSNR → p6 | rate | quality |
+|---|---|---|---|---|
+| 0.002 | 0.4417 → 0.3609 | 29.03 → **29.45** | **−18.3%** | **+0.42 dB** |
+| 0.012 | 0.7225 → 0.7045 | 31.80 → **32.59** | −2.5% | **+0.79 dB** |
+| 0.03 | 0.9831 → 1.0056 | 33.52 → **34.12** | +2.3% | **+0.60 dB** |
+| 0.075 | 1.3445 → 1.3959 | 34.83 → **35.29** | +3.8% | **+0.46 dB** |
+| 0.2 | 1.7752 → 1.8832 | 35.81 → **36.45** | +6.1% | **+0.64 dB** |
+
+Better at every point, and dramatically so at the low-rate end where it is simultaneously 18%
+cheaper and 0.42 dB better. **The `worst stream` column is `z_uv` at four of five points**, which is
+the gate failure that chapter 22.4 chased and fixed; the rates above are all pre-fix and therefore
+mildly pessimistic.
+
+The confound stated in §17.3 stands: `ladder_p6` has had 100,000 total steps to `ladder_p5`'s 50,000.
+§18.6 removes one candidate explanation, but not that one.
+
+### 18.6 `ladder_p6a_mcm1` — the MCM stage-count control
+
+`twobranch-mcm1`, identical in every respect to `ladder_p6` except that the Multi-Context Model runs
+**one** stage instead of four. Two rate points, 13.8 h — enough to answer the question, not enough
+for a BD-rate (which needs three).
+
+| β | est bpp | **act bpp** | **PSNR** | gap_q | oor_y | `ŷ` exact |
+|---|---|---|---|---|---|---|
+| 0.012 | 0.9614 | **0.7038** | **32.58** | +0.18% | 0.00000% | ✓ |
+| 0.03 | 1.3929 | **1.0096** | **34.08** | +0.07% | 0.00054% | ✓ |
+
+Set beside `ladder_p6`'s same two points:
+
+| β | | 1 stage | 4 stages | difference |
+|---|---|---|---|---|
+| 0.012 | act bpp | 0.7038 | 0.7045 | +0.1% |
+| | PSNR | 32.58 | 32.59 | **+0.01 dB** |
+| 0.03 | act bpp | 1.0096 | 1.0056 | −0.4% |
+| | PSNR | 34.08 | 34.12 | **+0.04 dB** |
+
+**Four sequential decode passes buy 0.01–0.04 dB and under 0.5% of rate.** That is the answer to
+open question 3 of §28, and it is a stronger negative than expected: the MCM's multi-stage structure
+is not where phase 6's gain came from. Since the 4-stage model costs four sequential context passes
+per latent block and the 1-stage model costs one, this is a materially better latency point at
+indistinguishable quality — and it is a result about our implementation at our training budget, not
+a claim about the standard's own MCM.
+
+What it does **not** settle: `ladder_p6`'s +0.60 dB over `ladder_p5` is now attributable to either
+the extra 50,000 steps or the presence of *any* context model, and the mcm1 run shares both of those
+with mcm4, so it cannot separate them. `ladder_p5_long` (§27.1) is the run that can.
 
 ## 19. Headline results
 
@@ -288,23 +333,30 @@ why the MCM — attached to the luma branch only — is the right next tool.
 | **AVIF** | **−36.1** | −42.3 | −41.2 | −37.7 | −26.5 | −40.7 | −24.6 | −39.5 | 10/11 |
 | ours #0, tier A | **−0.4** | −31.5 | −3.9 | −29.7 | **+30.0** | +3.0 | **+37.8** | −8.6 | 4/11 |
 | ours #1, tier full | **+1.8** | −26.2 | −4.2 | −16.6 | **+28.1** | +6.3 | **+30.4** | −5.6 | 6/11 |
-| *paper, Table V, dec 0* | *−7.5* | — | — | — | — | — | — | — | — |
+| ours #2, + MCM | **−9.2** | −34.6 | −12.6 | −23.6 | +12.0 | −5.6 | +17.7 | −17.6 | 6/11 |
+
+**The paper's Table V figure is deliberately not a row in that table.** It is −7.5%, but it is
+−7.5% **against VVC Intra**, and every row above is against JPEG. Those two numbers cannot be
+subtracted, and earlier drafts of this report subtracted them. §19.1.2 does the conversion
+properly, and the answer is much worse for us than the subtraction suggested.
 
 **The anchors validate the harness.** WebP at −10.6% and AVIF at −36.1% are where a correct
 implementation should put them. That is the check that makes our own row believable — and the
 check that failed loudly when the BD-rate code was wrong (§22.1).
 
-**Read our rows plainly: we are level with JPEG.** Not ahead of it on average, and not near VVC.
+**Read our rows plainly.** Ladders #0 and #1 are level with JPEG. Ladder #2, with the MCM, is
+**ahead of JPEG by 9.2% and roughly at WebP's level** — a real result, and the first time anything
+we trained beat a shipped codec. It is still nowhere near AVIF, let alone the paper.
 
 **But the per-metric spread is the actual result**, and it is enormous:
 
 | decisively **ahead** | decisively **behind** |
 |---|---|
-| MS-SSIM −31.5 / −26.2 | PSNR-HVS **+37.8 / +30.4** |
-| FSIM −29.7 / −16.6 | VMAF **+28.1 / +30.0** |
-| IW-SSIM −8.6 / −5.6 | NLPD +3.0 / +6.3 |
+| MS-SSIM −31.5 / −26.2 / −34.6 | PSNR-HVS **+37.8 / +30.4 / +17.7** |
+| FSIM −29.7 / −16.6 / −23.6 | VMAF **+30.0 / +28.1 / +12.0** |
+| IW-SSIM −8.6 / −5.6 / −17.6 | NLPD +3.0 / +6.3 / −5.6 |
 
-A ~60-point spread between MS-SSIM and PSNR-HVS on the same bitstreams. Both metrics are computed
+(Ladders #0 / #1 / #2.) A ~60-point spread between MS-SSIM and PSNR-HVS on the same bitstreams. Both metrics are computed
 on the same reconstruction, at 10-bit precision, on the luma plane. So this is not a measurement
 artefact — it is a statement about what the model learned. **Structural similarity is good;
 pixel-accurate fidelity is bad.** The model is producing plausible texture in roughly the right
@@ -322,6 +374,67 @@ over 10 points answer different questions, and §5.9.4 is why we print the overl
 
 The direct architecture comparison is §19.2's matched-rate measurement, which involves no
 interpolation whatsoever.
+
+### 19.1.2 Putting the paper's −7.5% on our axis
+
+This subsection corrects an error that ran through every earlier draft of this report, including
+its executive summary and its closing statement.
+
+The paper's Kodak figure for the simplest decoder is **−7.5% against VVC Intra (VTM-11.1)** — the
+anchor is stated in the header of its Table III and Table V is on the same anchor. Our numbers are
+**against JPEG**. Earlier drafts placed −7.5% as a row in the table above and then repeatedly
+described our position as "about 8 percentage points short," by differencing +1.8 against −7.5.
+**That subtraction is meaningless**: two BD-rates measured against different anchors are not on the
+same scale, and the direction of the error is the unflattering one.
+
+To convert, chain the rate ratios. A BD-rate of −*b* means the codec needs (1 − *b*) times the
+anchor's bits at matched quality, so:
+
+```
+paper vs JPEG  ≈  (1 − BD_rate[VVC vs JPEG]) × (1 − 0.075)
+```
+
+We cannot measure VVC Intra — no VTM in our harness — so we substitute AVIF (AV1 intra) at
+**−36.1%**, which is what §4.3 already calls our stand-in for VVC-class performance:
+
+```
+(1 − 0.361) × 0.925  =  0.591     →  about −41% vs JPEG
+```
+
+Published cross-checks generally put VTM intra some 5–10% ahead of libaom AV1 intra on still
+images, so the honest reading is a **range**: VVC Intra somewhere between −36% and −42% vs JPEG
+puts the paper's simplest decoder at **−41% to −46% vs JPEG** on Kodak.
+
+Restating every row on that one axis, as the multiple of JPEG's bits needed at matched quality:
+
+| | BD-rate vs JPEG | × JPEG's bits | × the paper's bits |
+|---|---|---|---|
+| ours #0, tier A | −0.4% | 0.996 | **1.69** |
+| ours #1, tier full | +1.8% | 1.018 | **1.72** |
+| ours #2, + MCM | −9.2% | 0.908 | **1.54** |
+| WebP | −10.6% | 0.894 | 1.51 |
+| AVIF | −36.1% | 0.639 | 1.08 |
+| *paper, Table V, dec 0* | *≈ −41%* | *0.591* | *1.00* |
+
+**So the gap is roughly 32 percentage points, not 8, and our best ladder spends about 1.5× the
+paper's bits at matched quality.** Two consequences, both of which change conclusions stated
+elsewhere in this report:
+
+1. **§26.2's tool accounting is a much smaller share of the gap than it appeared.** The eight
+   missing coding tools are worth ≈3.5% of the rate, which transfers between anchors to first
+   order because it is a relative saving. Adding them would move ladder #2 from 0.908 to
+   0.908 × 0.965 = 0.876, i.e. −12.4% vs JPEG. That is 3.5 points of a ~32-point gap, about 11%
+   of it, not the ~44% the old arithmetic implied.
+2. **§26.1's claim that the training budget is the dominant confound gets stronger, not weaker.**
+   Whatever is not the missing tools is now ~28 points rather than ~4.5, and the two candidates
+   for it are unchanged: the luma branch and 50,000 steps on a laptop.
+
+The caveat on the conversion itself: chaining BD-rates assumes the rate ratio is roughly constant
+across the quality range, and the two BD-rates being chained are integrated over different ranges
+(our 6/11 window against the paper's full one). It is an order-of-magnitude correction to a
+comparison that was previously wrong by a factor of four, not a precise figure. The way to make it
+precise is to put VTM-11.1 intra into `eval/codecs.py` as a fourth anchor and measure it on the
+same 24 images — which is now the highest-value item in §27.3.
 
 ### 19.2 The tier change, measured at a matched rate: +2.12 dB
 
@@ -356,14 +469,21 @@ The PSNR-plane BD-rates, which is the diagnostic that localises everything:
 | AVIF | −47.3 | −43.7 | **−59.1** | **−56.9** |
 | ours #0 | +28.1 | **+48.6** | **−43.2** | −37.8 |
 | ours #1 | +14.0 | **+28.2** | **−54.6** | **−47.0** |
+| ours #2 | −1.3 | **+10.1** | **−59.4** | **−51.6** |
 
-Read the bottom row across. **Our chroma is at AVIF's level** — −54.6 and −47.0 against AVIF's
-−59.1 and −56.9. Our luma is **+28.2%**, i.e. 28% *worse* than JPEG.
+Read any of our rows across. **Our chroma is at or past AVIF's level** — ladder #2's −59.4 and −51.6
+against AVIF's −59.1 and −56.9. Our luma is positive at every ladder, i.e. *worse than JPEG*.
 
-That is a **75-percentage-point spread between two branches of the same model**, trained by the
-same recipe, with the same optimiser, the same data, the same entropy coder and the same number of
-steps. Nothing in the training procedure is plane-specific except the 6:1:1 distortion weight,
-which favours luma.
+That is a **69-percentage-point spread between two branches of the same model** on ladder #2 (and it
+was 75 points on ladder #1), trained by the same recipe, with the same optimiser, the same data, the
+same entropy coder and the same number of steps. Nothing in the training procedure is plane-specific
+except the 6:1:1 distortion weight, which favours luma.
+
+The trend across the three ladders is the encouraging part: luma has gone **+48.6 → +28.2 → +10.1**
+while chroma has stayed pinned near AVIF. Both interventions that produced those steps — widening to
+the paper's channel counts, then adding a luma-only context model with another 50,000 steps — were
+aimed at luma, and both moved luma and only luma. The deficit is responding to treatment; it has not
+yet crossed zero.
 
 So this is a statement about the branches themselves, and it has three consequences that direct
 everything remaining:
@@ -372,9 +492,18 @@ everything remaining:
    AVIF on two of three planes.
 2. **The luma branch is where all remaining work belongs.** It is 160 channels against chroma's 96
    and it is the one carrying the detail.
-3. **The MCM is the right next tool**, because in JPEG AI the MCM attaches to the **luma branch
+3. **The MCM was the right next tool**, because in JPEG AI the MCM attaches to the **luma branch
    only** (§8.4). The standard's own designers put their strongest entropy model exactly where our
-   deficit is. `ladder_p6` is that experiment and it is running.
+   deficit is. `ladder_p6` was that experiment, it moved luma by 18 points, and §18.6 shows the
+   *multi-stage* part of it contributed almost none of that — so what helped was the presence of a
+   luma context model, the extra steps, or both.
+
+There is also a plausible reading of *why*, worth stating as a hypothesis rather than a result: the
+6:1:1 weighting is **OURS**, not the standard's. The paper says only "prioritise luma". If 6:1:1
+over-weights luma distortion relative to its rate, the optimiser will pour bits into luma while
+still failing to reach fidelity there — and the observed 25% chroma bit share with 8 dB better
+chroma is consistent with chroma being *over*-served. Testing this needs a weight sweep, which is
+in §27.
 
 There is also a plausible reading of *why*, worth stating as a hypothesis rather than a result: the
 6:1:1 weighting is **OURS**, not the standard's. The paper says only "prioritise luma". If 6:1:1

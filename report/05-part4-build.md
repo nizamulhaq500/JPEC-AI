@@ -36,7 +36,7 @@ outstanding and they are named as such.
 | **3** | Baseline neural codec | mean-scale hyperprior, rANS coder, training loop, round-trip gate | **complete, trained** |
 | **4** | Two-branch YCbCr | separate luma (160) / chroma (96) branches, cross-branch conditioning | **complete, smoke-trained** |
 | **5** | Residual + split hyper decoders | eqs (1)–(3), prediction head and scale head, integer `Iσ` | **complete, trained** |
-| **6** | Multi-Context Model | the 4-stage checkerboard of §VI-D | **complete, training now** |
+| **6** | Multi-Context Model | the 4-stage checkerboard of §VI-D | **complete, trained** |
 | **7** | Three synthesis transforms | SOP / BOP / HOP at 14 / 28 / 215 kMAC/pxl on one codestream | not started |
 | **8** | Variable rate | per-channel gain vectors, β displacement, the 18-point ladder from 4 parameter sets | not started |
 | **9** | me-tANS + codestream | the real entropy coder, markers, headers, skip mode | not started |
@@ -92,7 +92,7 @@ labelled.
 
 ## 14. The code
 
-14,027 lines of Python: 9,745 implementation across 33 modules, 4,282 test across 12 files.
+14,154 lines of Python: 9,666 implementation across 33 modules, 4,488 test across 13 files.
 
 ### 14.1 Layout
 
@@ -135,7 +135,7 @@ jpegai/
   cli.py              runtrain / runladder / runbench / selftest
 config/
   full.yaml  tierA.yaml  metrics.yaml  constants.yaml
-tests/            12 files, 331 tests
+tests/            13 files, 332 tests
 docs/             9 documents, 5,051 lines
 ```
 
@@ -189,7 +189,7 @@ Three layers, and they catch different things.
 
 ### 15.1 The three layers
 
-**Layer 1 — 331 unit tests.** Shape agreement, gradient flow, the σ table's exact disagreement
+**Layer 1 — 332 unit tests.** Shape agreement, gradient flow, the σ table's exact disagreement
 set, the shuffle round trip, BD-rate's invariance property, the metric conventions, the colour
 transform's inverse. These catch *code* errors.
 

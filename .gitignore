@@ -11,6 +11,9 @@
 /data/
 /checkpoints/
 /results/cache/
+# cloud/seeds/ is stripped copies of checkpoints/ for upload to the GPU box -- same
+# 100 MB problem, and cloud/make_seed.py regenerates them in seconds.
+/cloud/seeds/
 
 # Third-party. The WG1 reference software is a separate project under its own terms;
 # `docs/06-normative-constants.md` cites it file-by-file instead of vendoring it.

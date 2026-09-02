@@ -232,6 +232,7 @@ def _read_summary(final: Path, beta: float) -> dict:
         "gap_q_pct": rt.get("gap_q_pct"),
         "gap_pct": rt.get("gap_pct"),
         "y_oor_pct": rt.get("y_oor_pct"),
+        "z_oor_pct": rt.get("z_oor_pct"),
         "y_exact": rt.get("y_exact"),
         # Phase 5. Old checkpoints predate these keys, hence the defaults: `True`
         # for `streams_ok` so a pre-Phase-5 ladder is not reported as failing a gate
@@ -250,7 +251,8 @@ def _print_summary(rows: list[dict]) -> None:
     print("ladder summary   (act bpp and psnr are from the REAL bitstream)")
     print("-" * 78)
     print(f"{'beta':>8} {'lambda':>8} {'steps':>8} {'est bpp':>8} {'act bpp':>8} "
-          f"{'psnr':>7} {'gap_q':>7} {'oor':>7} {'exact':>6} {'worst stream':>16}")
+          f"{'psnr':>7} {'gap_q':>7} {'oor y':>7} {'oor z':>7} {'exact':>6} "
+          f"{'worst stream':>16}")
     for r in rows:
         def f(key, spec):
             v = r.get(key)
@@ -266,8 +268,8 @@ def _print_summary(rows: list[dict]) -> None:
         print(f"{r['beta']:>8g} {r['lambda255']:>8.0f} {r['step']:>8,} "
               f"{f('valid_bpp', '8.4f')} {f('act_bpp', '8.4f')} "
               f"{f('valid_psnr', '7.2f')} {f('gap_q_pct', '+7.2f')} "
-              f"{f('y_oor_pct', '7.3f')} {str(r.get('y_exact', '--')):>6} "
-              f"{worst:>16}")
+              f"{f('y_oor_pct', '7.3f')} {f('z_oor_pct', '7.3f')} "
+              f"{str(r.get('y_exact', '--')):>6} {worst:>16}")
     print("-" * 78)
     # The ladder is only meaningful if rate is monotone in beta. If it is not, a
     # point is undertrained -- say so rather than letting BD-rate silently
@@ -292,6 +294,27 @@ def _print_summary(rows: list[dict]) -> None:
         print("gate:    every rate point agrees with its quantised-sigma estimate "
               "to within +-0.5%")
 
+    # Escapes get their own arm because they are not reliably visible in any of the
+    # arms above. An escape makes the coder fall back to a uniform range for that
+    # symbol, which is *more* expensive than the table -- so it pushes the real
+    # bytes up and the gap *down*, and both the aggregate gate (+-0.5% two-sided)
+    # and `streams_ok` (one-sided, `excess > 16.0`) can read that as fine. beta0.002
+    # of ladder_p6 did exactly this: 1.82% of z_uv symbols escaped, the z stream came
+    # in 78 B under its own estimate, `streams_ok` stayed True and gap_q was -0.14%,
+    # inside the band. Rebuilding the tables with current code cost 0.6% of real
+    # bytes with no retraining. `out_of_range_fraction`'s docstring already says this
+    # number has to be watched directly rather than inferred from a gap; this is that.
+    esc = [r for r in rows
+           if max(r.get("y_oor_pct") or 0.0, r.get("z_oor_pct") or 0.0) > 0.01]
+    if esc:
+        print("WARNING: symbols escaped the entropy tables at beta "
+              + ", ".join(
+                  f"{r['beta']:g} (y {r.get('y_oor_pct') or 0.0:.3f}%, "
+                  f"z {r.get('z_oor_pct') or 0.0:.3f}%)" for r in esc))
+        print("         Escapes cost real bytes and are the one failure here that a")
+        print("         passing gate does not clear. Re-gate the checkpoint before")
+        print("         retraining it -- a stale table rebuilds for free.")
+
     # A separate arm from the aggregate above, for the same reason `roundtrip_check`
     # keeps them separate: one stream can disagree with its own table by tens of
     # percent while the aggregate stays under 0.5%, because the aggregate divides
@@ -302,9 +325,12 @@ def _print_summary(rows: list[dict]) -> None:
               + ", ".join(f"{r['beta']:g} ({r.get('worst_stream')} "
                           f"{r.get('worst_stream_b') or 0.0:+.0f} B, "
                           f"{r.get('worst_stream_pct') or 0.0:+.1f}%)" for r in split))
-        print("         The coder is faithful; the TABLE is not the density the rate")
-        print("         loss was trained against. Check `update()` against `forward()`")
-        print("         for that stream's entropy model -- not the rANS layer.")
+        print("         The coder is faithful. Two causes, and the `oor` columns tell")
+        print("         them apart: a nonzero `oor` for that stream means symbols fell")
+        print("         OUTSIDE the table and each paid an escape plus ~8 raw bits --")
+        print("         a table-extent problem, fixed in `update()`. With `oor` at zero")
+        print("         the table's shape is wrong instead: compare it against")
+        print("         `forward()`'s density. Either way, not the rANS layer.")
 
     # A ladder whose points were validated on different image sets has no
     # comparable rate column at all, so this outranks the monotonicity warning.

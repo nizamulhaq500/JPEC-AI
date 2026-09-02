@@ -38,6 +38,17 @@ from jpegai.config import PROJECT_ROOT
 #: function of these two numbers and the (constant) architecture.
 DEFAULT_HEADER_BYTES = 4
 
+#: Bumped by any change that moves a bitstream for unchanged weights, so that
+#: `fingerprint` invalidates the benchmark cache. A checkpoint's mtime cannot see a
+#: change to the coder, and a stale cached rate against new code is indistinguishable
+#: from a real measurement.
+#:
+#:   1 -- through 2026-08-31.
+#:   2 -- 2026-09-01: `FactorizedPrior.update` reads its table extent off the
+#:        density instead of off the learned quantiles, removing out-of-range
+#:        escapes on the factorised hyper-latent streams.
+CODER_VERSION = 2
+
 
 class NeuralCodec:
     """Duck-types `eval.codecs.Codec`: `.name`, `.qualities`, `.encode_decode`.
@@ -82,10 +93,20 @@ class NeuralCodec:
         on every benchmark run would cost more than the measurements. The failure
         mode this misses -- a file rewritten with identical size in the same
         nanosecond -- cannot happen to a torch.save.
+
+        The weights are not the whole story, though: the same checkpoint produces
+        different *bytes* whenever the entropy coder changes, and the coder is our
+        code, not the checkpoint's. `CODER_VERSION` is therefore folded in, and must
+        be bumped by any change that moves a bitstream. Without it, landing the
+        table-extent fix (`entropy.FactorizedPrior._density_extent`, which cut
+        `ladder_p6` beta 0.002 by 1.06%) would have left every cached row reporting
+        the old rate against the new code -- the same silent-wrong-number failure
+        this method exists to prevent, one level up.
         """
         import hashlib
 
         h = hashlib.sha256()
+        h.update(f"coder{CODER_VERSION}|".encode())
         for label in self.qualities:
             st = Path(self._paths[label]).stat()
             h.update(f"{label}:{st.st_size}:{st.st_mtime_ns}|".encode())

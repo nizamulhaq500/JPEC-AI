@@ -174,7 +174,7 @@ Our problem is narrower and it is the one this report answers:
 > reconstructed, implemented, trained and honestly measured?**
 
 The interesting part of that question is the word *honestly*. It is very easy to produce a
-neural codec that reports excellent numbers and is broken. Four of the six bugs in Part VI
+neural codec that reports excellent numbers and is broken. Five of the seven bugs in Part VI
 were of exactly this kind — they produced plausible results. So a large fraction of this
 project's effort went into building measurement machinery that can *catch* our own mistakes,
 before building the thing being measured. Chapter 15 is about that machinery, and Part VI is
@@ -202,7 +202,7 @@ a real entropy coder; every reported bitrate measured from the file, never estim
 loss; every reported image decoded from those same bytes. *Test:* a round-trip gate that runs
 during training and asserts the decoded latent is **bit-identical** to the encoded one, and
 that actual bytes agree with the model's own prediction to within ±0.5%. **Status: done and
-passing at every rate point.** §15.2. This gate is what caught two of the six bugs.
+passing at every rate point.** §15.2. This gate is what caught two of the seven bugs.
 
 **Objective 4 — Measure against the paper's own criteria.** All seven of the paper's metrics
 (MS-SSIM, VIF, FSIM, VMAF, NLPD, PSNR-HVS, IW-SSIM), on the paper's own datasets, with
@@ -213,15 +213,18 @@ unweighted mean, which the paper never states.
 
 **Objective 5 — Train it, and report what happens.** Including the runs that fail. *Test:*
 complete rate ladders with per-point logs retained, and a results section that prints the
-numbers that were wrong alongside the numbers that are right. **Status: two ladders complete,
-a third training.** Part V and Part VI.
+numbers that were wrong alongside the numbers that are right. **Status: three ladders complete,
+plus one two-point control.** Part V and Part VI.
 
 **Objective 6 — Be honest about the gap.** *Test:* compare against the paper's *comparable*
-figure, not its most flattering one. **Status: done, and it changed the target.** §8.4: the
-paper's headline −16.2% is on its own 50-image test set against VVC. Our comparable figure is
-its Table V — Kodak, simplest decoder — which is **−7.5%**. Using the headline number as a
-target would have overstated our shortfall by 8.7 percentage points and, worse, would have
-made a *correct* result look like a bug.
+figure, not its most flattering one, **and on the same anchor.** **Status: done twice, because
+the first attempt was wrong.** §8.4 established the comparable figure: the paper's headline
+−16.2% is on its own 50-image test set, and the Kodak equivalent is its Table V at **−7.5%**.
+What the first attempt got wrong is that both of those are BD-rates **against VVC Intra**, while
+every number we measure is against JPEG — so differencing them, which this report did in several
+places, is not arithmetic that means anything. §19.1.2 converts properly: the paper's simplest
+decoder is around **−41% vs JPEG**, our best ladder is −9.2%, and the gap is **~32 points**, not
+the ~8 the subtraction produced.
 
 ### 3.1 What we explicitly did not attempt
 
@@ -248,19 +251,20 @@ One page, no narrative.
 | 3 | Mean-scale hyperprior, rANS coder, training loop, round-trip gate | complete, trained |
 | 4 | Two-branch YCbCr architecture (separate luma/chroma latents) | complete, smoke-trained |
 | 5 | Residual coding with split hyper decoders (eqs 1–3) | complete, trained |
-| 6 | 4-stage Multi-Context Model (§VI-D) | complete, training now |
+| 6 | 4-stage Multi-Context Model (§VI-D) | complete, trained |
 | 7–14 | three synthesis transforms, variable rate, me-tANS + codestream, RVS/LSBS/post-filters, integer path, functionality, report, CLI | not started |
 
 ### 4.2 Verified
 
 | | |
 |---|---|
-| automated tests | **331** pytest tests, 12 files, 4,282 lines of test code |
+| automated tests | **332** pytest tests, 13 files, 4,488 lines of test code |
 | self-test checks | **210** without a checkpoint, **215** with one — full encode/decode path, ~30 s |
 | metrics live | **7 / 7** of the paper's set, plus PSNR and per-plane PSNR-Y/U/V |
 | coder fidelity | actual bytes within **±0.5%** of the model's own prediction at every rate point |
 | latent fidelity | `ŷ` **bit-exact** through `decode(encode(x))` at every rate point |
-| code size | 14,027 lines of Python (9,745 implementation + 4,282 tests) |
+| coder escapes | **zero** out-of-range symbols on every checkpoint of every ladder (§22.4) |
+| code size | 14,154 lines of Python (9,666 implementation + 4,488 tests) |
 | documentation | 9 markdown documents, 5,051 lines, ~43,000 words |
 
 ### 4.3 Measured
@@ -273,11 +277,18 @@ BD-rate against JPEG on the 24 Kodak images, seven-metric average. **Negative is
 | AVIF | **−36.1%** | 10/11 | AV1 intra — our stand-in for VVC-class performance |
 | ours, ladder #0 (tier A, 96 ch) | **−0.4%** | 4/11 | level with JPEG |
 | ours, ladder #1 (tier full, 160 ch) | **+1.8%** | 6/11 | level with JPEG, over a wider range |
-| *the paper, Table V, decoder 0* | *−7.5%* | — | *the honest target* |
+| ours, ladder #2 (+ 4-stage MCM) | **−9.2%** | 6/11 | ahead of JPEG, roughly WebP's level |
 
 `overlap` counts how many of JPEG's eleven quality points lie inside our shared quality range.
 It is printed because a BD-rate over 4 of 11 points and one over 10 of 11 are **not comparable
-to each other** — see §5.9.4. This is why the two ladders' AVGs must not be differenced.
+to each other** — see §5.9.4. This is why the three ladders' AVGs must not be differenced against
+each other; §19.2 and §18.5 do the architecture comparisons at matched rate instead.
+
+**The paper's number is not in that table, on purpose.** Its Table V figure for the simplest
+decoder is −7.5% **against VVC Intra**, not against JPEG, so it does not belong in a column of
+vs-JPEG BD-rates and must not be differenced against them. Converted onto this axis it is
+roughly **−41% vs JPEG** (§19.1.2), which puts the honest gap at about **32 points** — our best
+ladder needs ~1.5× the paper's bits at matched quality.
 
 ### 4.4 The three findings that matter most
 
@@ -290,8 +301,10 @@ training cannot help, and the latent width is the wall. §20.
 (tier A) against 1.3445 bpp → 34.83 dB (tier full). Not extrapolated — two real bitstreams at
 the same size. §19.2.
 
-**3. The remaining deficit is entirely in luma.** Chroma BD-rate −54.6% and −47.0%; luma
-+28.2%. A 75-point spread between two branches of one model. Nothing in the training recipe or
-the entropy coder is plane-specific, so this is a statement about the branches themselves —
-and it is what the currently-training ladder attacks, since the Multi-Context Model attaches to
-the luma branch only. §19.3.
+**3. The remaining deficit is entirely in luma.** On our best ladder, chroma BD-rate is −59.4%
+and −51.6% — at or past AVIF's level — while luma is **+10.1%**, still worse than JPEG. A
+69-point spread between two branches of one model. Nothing in the training recipe or the entropy
+coder is plane-specific, so this is a statement about the branches themselves. It is responding
+to treatment: luma has moved +48.6% → +28.2% → +10.1% as we widened the branch and then gave it
+a Multi-Context Model, which attaches to the luma branch only. It has not yet crossed zero.
+§19.3.

@@ -544,7 +544,10 @@ for the transform to exploit and the hyperprior's overhead is relatively larger.
 consequences for this project:
 
 1. **Our honest target is −7.5%**, not −16.2%. Using the headline number would have overstated
-   our shortfall by 8.7 points.
+   our shortfall by 8.7 points. **But note what −7.5% is measured against: VVC Intra**, the same
+   anchor as Table III, and *not* JPEG. Our own harness reports BD-rate against JPEG, so the two
+   figures live on different scales and differencing them — which this report did, in several
+   places, for weeks — is not meaningful. §19.1.2 converts onto a single anchor.
 2. **PSNR-HVS at +25.3% on Kodak is normal, not a bug.** When our own run produced +37.8% we
    knew to look at the *magnitude* rather than the sign — the paper's own codec is positive there
    too.

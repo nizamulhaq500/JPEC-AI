@@ -423,7 +423,7 @@ project — the download was silently truncated and validation ran on the *test*
 | `pytorch-msssim`, `piq`, `pyiqa` | metric backends |
 | `ffmpeg` (system, via Homebrew) | VMAF, using Netflix's own implementation |
 | `matplotlib`, `pandas` | RD plots and tables |
-| `pytest` | 331 tests |
+| `pytest` | 332 tests |
 
 ### 11.2 The metric conventions that are not guessable
 

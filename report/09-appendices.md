@@ -88,7 +88,7 @@ and destroys everything after it. Difficulty (d). §2.2d, §6.6
 eye is far more sensitive to Y, so codecs spend more bits on it. JPEG AI uses BT.709. §6.1
 
 **Luma / chroma** — brightness and colour. In this report: our chroma is at AVIF's level and our luma
-is 28% behind JPEG, a 75-point spread. §19.3
+is 10% behind JPEG, a 69-point spread. §19.3
 
 **Two-branch** — JPEG AI's distinctive structural choice: separate analysis/synthesis networks for
 luma and chroma, with luma→chroma conditioning at exactly two points. §6.1, §8.4
@@ -127,7 +127,7 @@ Two BD-rates with different overlaps are **not comparable to each other**. §19.
 
 **Round-trip gate** — our mid-training assertion that the decoded latent is bit-identical to the
 encoded one, that real bytes match the model's own estimate to ±0.5%, and that the out-of-range rate
-is zero. Caught two of six bugs. §15.2
+is zero. Caught two of seven bugs. §15.2
 
 **`gap_q`** — the round-trip gate's residual disagreement between actual bytes and the quantised-σ
 estimate. §15.2
@@ -187,7 +187,7 @@ python -m jpegai.selftest --checkpoint checkpoints/ladder_p5/beta0.075/final.pt
 python -m pytest -q
 ```
 
-331 tests across 12 files.
+332 tests across 13 files.
 
 ## B.3 Training
 
@@ -270,7 +270,7 @@ Builds this PDF. The `DYLD_FALLBACK_LIBRARY_PATH` is mandatory — see §23.4.
 
 # Appendix C — Code map
 
-33 implementation modules, 9,745 lines; 12 test files, 4,282 lines.
+33 implementation modules, 9,666 lines; 13 test files, 4,488 lines.
 
 | module | lines* | responsibility |
 |---|---|---|
@@ -304,7 +304,7 @@ Builds this PDF. The `DYLD_FALLBACK_LIBRARY_PATH` is mandatory — see §23.4.
 `jpegai/selftest.py` | | the 210/215-check end-to-end self test
 `jpegai/cli.py` | | `runtrain` / `runladder` / `runbench` / `selftest`
 
-\* per-module line counts are omitted rather than approximated; the totals (9,745 + 4,282 = 14,027)
+\* per-module line counts are omitted rather than approximated; the totals (9,666 + 4,488 = 14,154)
 are measured.
 
 Configuration: `config/full.yaml`, `config/tierA.yaml`, `config/metrics.yaml`,
@@ -331,6 +331,15 @@ All BD-rates against JPEG, 24 Kodak images, PCHIP interpolant, per-metric first 
 | AVIF | **−36.1** | −42.3 | −41.2 | −37.7 | −26.5 | −40.7 | −24.6 | −39.5 | 10/11 |
 | ours #0, tier A | **−0.4** | −31.5 | −3.9 | −29.7 | +30.0 | +3.0 | +37.8 | −8.6 | 4/11 |
 | ours #1, tier full | **+1.8** | −26.2 | −4.2 | −16.6 | +28.1 | +6.3 | +30.4 | −5.6 | 6/11 |
+| ours #2, + MCM | **−9.2** | −34.6 | −12.6 | −23.6 | +12.0 | −5.6 | +17.7 | −17.6 | 6/11 |
+| ours, mcm1 control | *nan* | — | — | — | — | — | — | — | 0/0 |
+
+The mcm1 control has two rate points and BD-rate needs three, so it has no row; D.6 compares it
+against ladder #2 point by point instead.
+
+All rows for ladders #0–#2 are **pre-fix**: they were measured before §22.4's table-extent repair,
+which removes out-of-range escapes from the `z_uv` stream. The two-branch ladders (#1, #2) are
+therefore slightly pessimistic here — up to ~1.1% of payload at the lowest rate point.
 
 ## D.2 PSNR-plane BD-rate
 
@@ -340,6 +349,11 @@ All BD-rates against JPEG, 24 Kodak images, PCHIP interpolant, per-metric first 
 | AVIF | −47.3 | −43.7 | −59.1 | −56.9 |
 | ours #0 | +28.1 | +48.6 | −43.2 | −37.8 |
 | ours #1 | +14.0 | +28.2 | −54.6 | −47.0 |
+| ours #2 | **−1.3** | **+10.1** | **−59.4** | **−51.6** |
+
+Ladder #2's `psnr_y` at +10.1% is the clearest single number in the appendix: the luma deficit that
+was +48.6% at tier A and +28.2% at tier full is now +10.1%, while chroma sits at −59.4/−51.6%, far
+ahead of AVIF. The imbalance §26.3 flags is shrinking but has not reversed.
 
 ## D.3 Ladder #0 — `ladder`, mean-scale, tier A, 50,000 steps/point
 
@@ -368,9 +382,46 @@ Kodak operating points: 0.4833 / 0.8870 / 1.2707 / 1.7473 / 2.2802 bpp at PSNR 2
 / 35.38 / 36.47.
 
 Gate warnings as printed: failure at β 0.002 (−3.30%); stream/table disagreement at β 0.012 (`z_uv`
-+104 B, +4.9%) and 0.03 (`z_uv` +109 B, +9.5%). §22.4.
++104 B, +4.9%) and 0.03 (`z_uv` +109 B, +9.5%). Cause found and fixed 2026-09-01 — out-of-range
+escapes, not the table/density mismatch the message named; §22.4. These figures are as printed at
+the time, so they reflect the pre-fix coder.
 
-## D.5 Smoke ladders, 3,000 steps/point — pipeline tests, not results
+## D.5 Ladder #2 — `ladder_p6`, `twobranch-mcm`, tier full, 50,000 steps/point
+
+Warm-started from `ladder_p5`, so 100,000 cumulative steps per point. Total 35.0 h.
+
+| β | est bpp | act bpp | PSNR | gap_q | oor_y | exact | worst stream |
+|---|---|---|---|---|---|---|---|
+| 0.002 | 0.4561 | 0.3609 | 29.45 | −0.14% | 0.000% | ✓ | `z_uv` +27 B (+1.1%) |
+| 0.012 | 0.9628 | 0.7045 | 32.59 | +0.19% | 0.000% | ✓ | **`z_uv` +5.6%** |
+| 0.03 | 1.3925 | 1.0056 | 34.12 | +0.06% | 0.000% | ✓ | `z_uv` +2.4% |
+| 0.075 | 1.9232 | 1.3959 | 35.29 | +0.04% | 0.000% | ✓ | `y_uv` +0.06% |
+| 0.2 | 2.5575 | 1.8832 | 36.45 | +0.02% | 0.000% | ✓ | `z_uv` +0.03% |
+
+Kodak operating points: 0.4323 / 0.9191 / 1.3307 / 1.8283 / 2.4317 bpp at PSNR 29.25 / 32.69 / 34.62
+/ 36.00 / 37.29. Per-plane at the top point: Y 38.32, U 47.68, V 47.74.
+
+`z_uv` is the worst stream at four of five points, all of it the pre-fix escape behaviour of §22.4.
+
+## D.6 The MCM stage-count control — `ladder_p6a_mcm1`
+
+`twobranch-mcm1`: identical to ladder #2 except one context stage instead of four. Two points, 13.8 h.
+
+| β | est bpp | act bpp | PSNR | gap_q | oor_y | exact |
+|---|---|---|---|---|---|---|
+| 0.012 | 0.9614 | 0.7038 | 32.58 | +0.18% | 0.000% | ✓ |
+| 0.03 | 1.3929 | 1.0096 | 34.08 | +0.07% | 0.001% | ✓ |
+
+On Kodak, against ladder #2's same two β:
+
+| β | | 1 stage | 4 stages | 4-stage advantage |
+|---|---|---|---|---|
+| 0.012 | bpp / PSNR | 0.9194 / 32.69 | 0.9191 / 32.69 | −0.03% rate, **0.00 dB** |
+| 0.03 | bpp / PSNR | 1.3348 / 34.60 | 1.3307 / 34.62 | −0.31% rate, **+0.02 dB** |
+
+Four sequential decode passes against one, for 0.02 dB and 0.3% of rate. §18.6 reads this out.
+
+## D.7 Smoke ladders, 3,000 steps/point — pipeline tests, not results
 
 `ladder_cpu3k` — mean-scale, CPU:
 
@@ -388,7 +439,7 @@ Gate warnings as printed: failure at β 0.002 (−3.30%); stream/table disagreem
 | 0.03 | 0.8686 | 0.7383 | 25.46 | **+1.85%** | ✓ |
 | 0.2 | 1.0836 | 0.9503 | 26.41 | **+2.24%** | ✓ |
 
-## D.6 The tier comparison at matched rate
+## D.8 The tier comparison at matched rate
 
 | | act bpp | PSNR |
 |---|---|---|
@@ -398,7 +449,7 @@ Gate warnings as printed: failure at β 0.002 (−3.30%); stream/table disagreem
 
 Per-β PSNR delta: +0.28 / +0.88 / +1.45 / +2.30 / +3.10 dB.
 
-## D.7 The ceiling measurements
+## D.9 The ceiling measurements
 
 | condition | β = 0.03 | β = 0.2 |
 |---|---|---|
@@ -415,7 +466,7 @@ Optimal linear (PCA/KLT) transform bound:
 | 192 | 4.0:1 | 37.11 |
 | 320 | 2.4:1 | 46.75 |
 
-## D.8 Complexity
+## D.10 Complexity
 
 | model | params | total kMAC/pxl | decoder kMAC/pxl |
 |---|---|---|---|
@@ -430,7 +481,7 @@ Optimal linear (PCA/KLT) transform bound:
 Split vs fused `h_s`: **0.49 vs 3.33 kMAC/pixel** = 6.8× cheaper, at an accuracy cost of 0.055%.
 Chroma is 33.0 of 160.0 total and 27.0 of 132.4 decoder kMAC/pixel.
 
-## D.9 The monochrome fast path
+## D.11 The monochrome fast path
 
 | β | rate saving |
 |---|---|
@@ -445,7 +496,7 @@ Chroma is 33.0 of 160.0 total and 27.0 of 132.4 decoder kMAC/pixel.
 
 Luma bit-identical; chroma flat to 1.2 × 10⁻⁷.
 
-## D.10 Training throughput
+## D.12 Training throughput
 
 | configuration | it/s | per point | per 5-point ladder |
 |---|---|---|---|
@@ -683,5 +734,5 @@ PyTorch (MPS backend), NumPy, SciPy (`PchipInterpolator`), Pillow with `pillow-a
 
 **This project**
 
-`github.com/nizamulhaq500/JPEC-AI` — 14,027 lines of Python, 331 tests, 9 documents, and the two
+`github.com/nizamulhaq500/JPEC-AI` — 14,154 lines of Python, 332 tests, 9 documents, and the two
 rate ladders whose bitstreams produced every measured number in this report.

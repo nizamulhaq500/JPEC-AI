@@ -64,24 +64,30 @@ architecture the paper describes: a two-branch YCbCr autoencoder (a 160-channel 
 and a 96-channel chroma latent, both at one-sixteenth resolution), a hyperprior that
 transmits a compressed description of the latent's own statistics, residual coding against a
 learned prediction, a 4-stage Multi-Context Model, and a real range/rANS entropy coder that
-writes real bytes. Six of the fourteen planned phases are complete. The code is 14,027 lines
-of Python across 33 modules and 12 test files, verified by **331 automated tests** and a
+writes real bytes. Six of the fourteen planned phases are complete. The code is 14,154 lines
+of Python across 33 modules and 13 test files, verified by **332 automated tests** and a
 **210-check self-test** that exercises the entire encode–decode path on the user's own
 hardware in 30 seconds.
 
-**What we measured.** Two full rate ladders are trained — five operating points each, 50,000
-optimisation steps per point, about 12 hours of wall-clock per ladder on an Apple M2 Pro. On
-the 24 Kodak images, against JPEG, on the paper's own seven-metric average, they score
-**−0.4%** (reduced-width development tier) and **+1.8%** (the paper's own channel widths).
-Read plainly: our codec is currently level with JPEG. It is decisively *ahead* on the
-structural and perceptual metrics — MS-SSIM −26% to −32%, FSIM −17% to −30% — and decisively
-*behind* on the two that track pixel error — VMAF +28%, PSNR-HVS +30%. Splitting by colour
-plane locates the deficit precisely: our **chroma** is at AVIF's level (−55% and −47% BD-rate
-on the two chroma planes, where AVIF is −59% and −57%), while our **luma** is 28% behind
-JPEG. That is a 75-percentage-point spread between two branches of the same model, trained by
-the same recipe, and it is the single most useful finding in the project so far.
+**What we measured.** Three full rate ladders are trained — five operating points each, 50,000
+optimisation steps per point, about 12 to 35 hours of wall-clock per ladder on an Apple M2 Pro.
+On the 24 Kodak images, against JPEG, on the paper's own seven-metric average, they score
+**−0.4%** (reduced-width development tier), **+1.8%** (the paper's own channel widths) and
+**−9.2%** (adding the Multi-Context Model). Read plainly: the first two are level with JPEG and
+the third is ahead of it, at roughly WebP's level. All three are decisively *ahead* on the
+structural and perceptual metrics — MS-SSIM −26% to −35%, FSIM −17% to −30% — and *behind* on
+the two that track pixel error, though that is closing fast: VMAF +30% → +12%, PSNR-HVS
++38% → +18% across the three ladders.
 
-**What went wrong, and what that bought.** Six substantive bugs were found and fixed, four of
+Splitting by colour plane locates the deficit precisely and identically in all three: our
+**chroma** is at or past AVIF's level (−59% and −52% BD-rate on the two chroma planes, where
+AVIF is −59% and −57%), while our **luma** is still worse than JPEG, at +10%. That is a
+69-percentage-point spread between two branches of the same model, trained by the same recipe,
+and it is the single most useful finding in the project so far. The luma figure has moved
++49% → +28% → +10% as we widened the branch and then gave it a context model, so it is
+responding to treatment — but it has not yet crossed zero.
+
+**What went wrong, and what that bought.** Seven substantive bugs were found and fixed, five of
 them the kind that produce plausible numbers rather than crashes. The most expensive was in
 our own BD-rate measurement code, not in the codec: a global cubic fit — the textbook
 Bjøntegaard method — is invalid for metrics that saturate near their maximum, and it moved
@@ -101,12 +107,18 @@ The learned transform is 1.4 dB *better* than the best possible linear transform
 size, which is the transform doing its job. Widening to the paper's own 160 channels was then
 measured, not argued: **+2.12 dB at a matched 1.34 bits per pixel**.
 
-**Honest position.** We are level with JPEG, not with VVC. The paper's own honest yardstick
-for this dataset and this decoder complexity is **−7.5%** (its Table V, simplest decoder, on
-Kodak), so we are about 8 percentage points short of the standard's easiest published figure
-and we know where those points are: the luma branch, and the eight coding tools in phases
-7–14 that we have not built yet. A third ladder, which attaches the multi-stage context model
-to the luma branch only, is training as this report is written.
+**Honest position.** Three ladders are trained. The first two are level with JPEG; the third,
+which attaches the multi-stage context model to the luma branch, is **9.2% ahead of JPEG** —
+roughly WebP's level, and the first thing we trained that beats a shipped codec.
+
+Against the standard we are much further behind than an earlier draft of this report claimed.
+The paper's Kodak figure for the simplest decoder is −7.5%, but that is **against VVC Intra**,
+whereas all of our numbers are against JPEG; earlier drafts differenced the two and reported a
+gap of "about 8 percentage points." Converting properly (§19.1.2) puts the paper's decoder at
+roughly **−41% vs JPEG**, so the real gap is **about 32 points**, and at matched quality we
+spend about **1.5× the paper's bits**. About 3.5 points of that is the eight coding tools we
+have not built (phases 7–14); the remaining ~28 are the luma branch and a training budget of
+50,000 steps on a laptop, and we cannot yet separate those two.
 
 <div class="page-break"></div>
 

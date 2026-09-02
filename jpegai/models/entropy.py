@@ -465,22 +465,84 @@ class FactorizedPrior(EntropyModel):
 
     # -- tables and coding -------------------------------------------------
     @torch.no_grad()
+    def _density_extent(self, max_half_width: int = 512):
+        """Table extent read off the learned density rather than off `quantiles`.
+
+        Returns the smallest integer ``(minima, maxima)`` per channel whose
+        *outside* mass is at most ``tail_mass / 2`` on each side, measured in the
+        centred coordinate `forward` uses -- so the returned interval is
+        ``[-minima, +maxima]`` in symbol space, and it need not be symmetric.
+
+        This exists because `quantiles` is only an *estimate* of those points,
+        maintained by a separate optimiser (:meth:`aux_loss`) that converges on
+        its own schedule. Reading the density directly is exact by construction
+        and costs one MLP evaluation on a small grid.
+        """
+        # self.target[0] is logit(tail_mass / 2) -- the same threshold aux_loss
+        # drives `quantiles[:, :, 0]` toward, so a converged model agrees with the
+        # quantile-derived extent and this method changes nothing.
+        thr = float(self.target[0])
+        dev = self.quantiles.device
+        half = 16
+        while True:
+            v = torch.arange(-half, half + 1, dtype=torch.float32, device=dev)
+            grid = v[None, None, :].expand(self.channels, 1, -1)
+            lower = self._logits_cumulative(grid - 0.5, stop_gradient=True)[:, 0, :]
+            upper = self._logits_cumulative(grid + 0.5, stop_gradient=True)[:, 0, :]
+            # The CDF is monotone in v (all matrices pass through softplus), so
+            # `keep_lo` is a True prefix and `keep_hi` a True suffix. Counting is
+            # therefore enough to locate each boundary -- no search needed.
+            keep_lo = lower <= thr            # P(symbol < v - 0.5) <= tail_mass/2
+            keep_hi = upper >= -thr           # P(symbol > v + 0.5) <= tail_mass/2
+            covered = bool(keep_lo[:, 0].all()) and bool(keep_hi[:, -1].all())
+            if covered or half >= max_half_width:
+                break
+            half *= 2
+        n = 2 * half + 1
+        lo_i = torch.clamp(keep_lo.sum(dim=1) - 1, min=0)
+        hi_i = torch.clamp(n - keep_hi.sum(dim=1), max=n - 1)
+        minima = torch.clamp(-v[lo_i], min=0).ceil().int()
+        maxima = torch.clamp(v[hi_i], min=0).ceil().int()
+        return minima, maxima
+
+    @torch.no_grad()
     def update(self, force: bool = False) -> bool:
         """Build the quantised CDF table from the learned density.
 
-        Table extent comes from the learned quantiles: channel k covers
-        ``[median - minima_k, median + maxima_k]``. Channels with a tight
+        Table extent is read off the density by :meth:`_density_extent`: channel k
+        covers ``[median - minima_k, median + maxima_k]``. Channels with a tight
         distribution get a short row; the array is padded to the widest.
         """
         if self.ready and not force:
             return False
 
         med = self.quantiles[:, 0, 1]
-        # ceil, then clamp at 0: a channel whose learned quantiles have collapsed
-        # (can happen early in training) must still get a table with >= 1 symbol
-        # rather than a negative length.
-        minima = torch.clamp(torch.ceil(med - self.quantiles[:, 0, 0]), min=0).int()
-        maxima = torch.clamp(torch.ceil(self.quantiles[:, 0, 2] - med), min=0).int()
+        # Extent from the density, not from `quantiles`. `quantiles` is trained by a
+        # separate optimiser (:meth:`aux_loss`) and on an unconverged model it is
+        # wrong in two ways at once: `med` sits off the density's mode, so symbols
+        # are not centred on zero, and the interval is too narrow to reach where
+        # they actually land. The result is symbols outside the table, each paying
+        # an escape symbol plus a bypass-coded raw value -- roughly 8 bits where an
+        # in-table rare symbol would have cost a fraction of one.
+        #
+        # Measured on the phase-6 two-branch chroma hyper-latent (`z_uv`, 96
+        # channels): 2 channels had |med| ~ 1.8 with a 3-symbol row [-1, +1] while
+        # their symbols reached +-2, giving 2072 escapes over the 24 Kodak images and
+        # **+11.5%** on that stream at beta=0.012, +3.8% at 0.03. Reading the extent
+        # off the density removes every escape on all eight ladder checkpoints
+        # measured, and lands `z_uv` at -0.5% / +1.3% of the `forward()` estimate.
+        # Payload totals move -1.06% (`ladder_p6` beta 0.002) to -0.41%
+        # (`ladder_p5` beta 0.012); the two 3,000-step probe ladders, which had no
+        # escapes to recover, cost +0.02%, which is ~25 B of CDF quantisation noise.
+        #
+        # `med` itself is deliberately left alone: `forward` centres on it, so the
+        # rate loss was trained against the density evaluated at `x - med`, and
+        # changing it here would make the table describe a different distribution
+        # than the one the model was optimised for. Only the extent is at issue.
+        #
+        # This is a coder-side change only. Decoded latents and `x_hat` are
+        # bit-identical before and after, so no checkpoint is invalidated.
+        minima, maxima = self._density_extent()
 
         pmf_length = (minima + maxima + 1).int()
         max_length = int(pmf_length.max().item())
