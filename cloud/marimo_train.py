@@ -514,11 +514,11 @@ def _status():
     sh("pgrep -af cloud_run.py | grep -o -- '--name [A-Za-z0-9_]*' | sort | uniq -c"
        " || echo '  (no cloud_run.py processes)'", check=False)
 
-    for name in JOBS:
-        log = ROOT / "logs" / f"cloud_{name}.log"
-        if not log.exists():
-            print(f"\n=== {name}: no log")
-            continue
+    # Iterate the LOGS, not JOBS: cell 9's hole point is launched outside the tier
+    # dictionary, and keying off JOBS silently omitted it. Anything that writes
+    # logs/cloud_*.log shows up here now, whoever launched it.
+    for log in sorted((ROOT / "logs").glob("cloud_*.log")):
+        name = log.stem[len("cloud_"):]
         st = log.stat()
         lines = [ln for ln in log.read_text(errors="replace").splitlines() if ln.strip()]
         prog = [ln for ln in lines if "/" in ln and "it/s" in ln]
@@ -554,27 +554,81 @@ def _status():
 _status()
 
 # ===================== CELL 8 — package results for download ==================
-# Run when a job finishes. Assume this filesystem is NOT durable: pull the tarball
-# down before the session ends. ~60-80 MB per rate point.
+# Run when a job finishes. Assume this filesystem is NOT durable: pull the files
+# down before the session ends.
+#
+# Two kinds of output with very different urgency, so two kinds of archive:
+#   * cloud_numbers.tar.gz -- every ladder.json and every log. Under a megabyte,
+#     and it holds every number that ends up in the report. Take it first; once it
+#     is on the Mac, losing the container costs GPU hours but no results.
+#   * cloud_w<n>_<name>.tar.gz -- weights, one archive per run, ranked by what is
+#     blocked without them. 100-150 MB each, so pulling them through a browser is
+#     a decision rather than a formality. Stop once you have what you need.
+#
+# This walks the checkpoint tree rather than JOBS on purpose. Cell 9's hole point
+# writes to checkpoints/ladder_p6/beta0.005, which is not a JOBS key, and it is the
+# most valuable file here -- keying off JOBS left it behind without saying so.
 
 
 def _package():
     import tarfile
 
-    out = ROOT / "cloud_results.tar.gz"
-    with tarfile.open(out, "w:gz") as tf:
-        for name in JOBS:
-            for rel in (f"checkpoints/{name}/ladder.json", f"logs/cloud_{name}.log"):
-                src = ROOT / rel
-                if src.exists():
-                    tf.add(src, arcname=rel)
-            for f in (ROOT / "checkpoints" / name).rglob("final.pt"):
+    # The seed tree came FROM the Mac, so sending it back is a 200 MB round trip
+    # for files already there. Matched on path COMPONENTS, not string prefixes:
+    # "ladder_p5_cont".startswith("ladder_p5") is true and would drop a real run.
+    seeded = [("ladder_p5",), ("ladder_p6", "beta0.002")]
+    # Ranked by what cannot be done without it. #1 removes PCHIP's interpolation
+    # across JPEG's densest Kodak region from the headline BD-rate; #2 settles
+    # single-branch vs two-branch; #3 puts the step-budget result on Kodak. The
+    # sweeps come last because their conclusion is already in ladder.json -- three
+    # near-identical rate points do not need re-benching to be reported.
+    rank = [("ladder_p6", "beta0.005"), ("ladder_p3f",), ("ladder_p6_long",),
+            ("ladder_p5_cont",), ("sweep_w6",), ("sweep_w8",), ("sweep_w4",)]
+    # ladder.json files the MAC owns. Never ship these back: checkpoints/ladder_p6/
+    # ladder.json on the Mac is the authoritative seven-point ladder, and an
+    # extract-in-place of a box copy would quietly overwrite it.
+    mac_owned = {"ladder_p5", "ladder_p6"}
+
+    # Arcnamed under cloud_results/ so that extracting it can never overwrite
+    # anything -- the point is to read these, not to slot them into the tree.
+    numbers = ROOT / "cloud_numbers.tar.gz"
+    with tarfile.open(numbers, "w:gz") as tf:
+        for p in sorted(ROOT.glob("checkpoints/*/ladder.json")):
+            tf.add(p, arcname=f"cloud_results/{p.parent.name}_ladder.json")
+        for p in sorted((ROOT / "logs").glob("cloud_*.log")):
+            tf.add(p, arcname=f"cloud_results/{p.name}")
+    print(f"{numbers.name:<38} {numbers.stat().st_size / 2**20:>6.1f} MiB"
+          f"   <-- take this first: every number, no weights")
+
+    groups: dict[int, list] = {}
+    for f in sorted((ROOT / "checkpoints").rglob("final.pt")):
+        rel = f.relative_to(ROOT / "checkpoints")
+        if any(rel.parts[:len(s)] == s for s in seeded):
+            continue
+        i = next((n for n, r in enumerate(rank) if rel.parts[:len(r)] == r), len(rank))
+        groups.setdefault(i, []).append(f)
+
+    print()
+    for i in sorted(groups):
+        label = "_".join(rank[i]) if i < len(rank) else "other"
+        out = ROOT / f"cloud_w{i + 1}_{label.replace('.', '')}.tar.gz"
+        with tarfile.open(out, "w:gz") as tf:
+            for f in groups[i]:
+                # Real paths here, unlike the numbers archive: these have to land
+                # where runbench looks for them.
                 tf.add(f, arcname=str(f.relative_to(ROOT)))
-    print(f"{out}  {out.stat().st_size / 2**20:.0f} MiB")
-    print("download this, then on the Mac:")
-    print("  tar xzf cloud_results.tar.gz")
-    print("  .venv/bin/python -m jpegai.eval.runbench --neural "
-          "checkpoints/ladder_p3f --codecs jpeg,webp,avif")
+            run = rank[i][0] if i < len(rank) else None
+            j = ROOT / "checkpoints" / run / "ladder.json" if run else None
+            if j and j.exists() and run not in mac_owned:
+                tf.add(j, arcname=str(j.relative_to(ROOT)))
+        print(f"{out.name:<38} {out.stat().st_size / 2**20:>6.1f} MiB"
+              f"   {len(groups[i])} checkpoint(s)")
+
+    print("\non the Mac, in whatever order you got them:")
+    print("  tar xzf cloud_numbers.tar.gz     # lands in cloud_results/, overwrites nothing")
+    print("  tar xzf cloud_w1_ladder_p6_beta0005.tar.gz   # into checkpoints/ in place")
+    print("  .venv/bin/python -m jpegai.eval.runbench --neural checkpoints/ladder_p6 "
+          "--codecs jpeg,webp,avif --dataset kodak")
 
 
 _package()

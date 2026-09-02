@@ -12,8 +12,10 @@
 /checkpoints/
 /results/cache/
 # cloud/seeds/ is stripped copies of checkpoints/ for upload to the GPU box -- same
-# 100 MB problem, and cloud/make_seed.py regenerates them in seconds.
-/cloud/seeds/
+# 100 MB problem, and cloud/make_seed.py regenerates them in seconds. The glob is
+# deliberate: --out takes any directory, and seeds_p6/ (114 MB) was already sitting
+# untracked next to it, one `git add -A` away from the 100 MB limit.
+/cloud/seeds*/
 # The same tarball also gets dropped at the root on the way to a browser upload,
 # where `/cloud/seeds/` does not cover it. 45 MB, so `git add -A` would otherwise
 # push it past GitHub's warning threshold for a file that rebuilds in seconds.
