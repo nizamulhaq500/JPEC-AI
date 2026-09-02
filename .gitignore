@@ -14,6 +14,10 @@
 # cloud/seeds/ is stripped copies of checkpoints/ for upload to the GPU box -- same
 # 100 MB problem, and cloud/make_seed.py regenerates them in seconds.
 /cloud/seeds/
+# The same tarball also gets dropped at the root on the way to a browser upload,
+# where `/cloud/seeds/` does not cover it. 45 MB, so `git add -A` would otherwise
+# push it past GitHub's warning threshold for a file that rebuilds in seconds.
+/seeds.tar.gz
 
 # Third-party. The WG1 reference software is a separate project under its own terms;
 # `docs/06-normative-constants.md` cites it file-by-file instead of vendoring it.

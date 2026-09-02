@@ -467,7 +467,13 @@ def _launch():
 
     # 4 vCPUs against 4 torch processes that each default to 4 OMP threads is 16
     # threads on 4 cores. Pinning to 1 is worth more here than anything else.
-    env = "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1"
+    #
+    # PYTHONUNBUFFERED because stdout redirected to a file is block-buffered at
+    # 8 KiB: the progress lines flush themselves (loop.py:514) but the ladder header
+    # does not, so without this the log stays EMPTY until step 200 -- and an empty
+    # log is exactly when you most want to read the header and confirm the warm
+    # start took. Costs nothing at one line per 200 steps.
+    env = "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1"
 
     for name, args in TIERS[TIER].items():
         if name in REQUIRE_SEED and not have_seed:
@@ -502,16 +508,38 @@ def _status():
     print(time.strftime("%H:%M:%S"))
     sh("nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,"
        "temperature.gpu --format=csv,noheader", check=False)
+    # Liveness, separately from the logs. An empty log is ambiguous on its own --
+    # a job still in startup and a job that died before its first flush look the
+    # same in the file -- and this is what tells them apart.
+    sh("pgrep -af cloud_run.py | grep -o -- '--name [A-Za-z0-9_]*' | sort | uniq -c"
+       " || echo '  (no cloud_run.py processes)'", check=False)
 
     for name in JOBS:
         log = ROOT / "logs" / f"cloud_{name}.log"
         if not log.exists():
             print(f"\n=== {name}: no log")
             continue
+        st = log.stat()
         lines = [ln for ln in log.read_text(errors="replace").splitlines() if ln.strip()]
         prog = [ln for ln in lines if "/" in ln and "it/s" in ln]
-        print(f"\n=== {name}")
-        print("   " + (prog[-1].strip() if prog else lines[-1][:150]))
+        print(f"\n=== {name}   {st.st_size:,} B, last write "
+              f"{(time.time() - st.st_mtime) / 60:.1f} min ago")
+        if prog:
+            print("   " + prog[-1].strip())
+        elif lines:
+            print("   " + lines[-1][:150])
+        else:
+            # An empty log is the NORMAL state for the first few minutes and used to
+            # crash this cell on `lines[-1]`. Only the progress and validation lines
+            # flush (loop.py:514, 557, 564); the ladder header does not, so with
+            # stdout redirected to a file it sits in an 8 KiB block buffer until the
+            # first `--log-every` line pushes it out. Before that there is genuinely
+            # nothing in the file, and startup is not instant either: torch import,
+            # the 677 MiB crop tensor, then cudnn.benchmark autotuning the convs.
+            print("   empty -- nothing has flushed yet. First write is the step-200"
+                  " progress line;\n       until then the header is still in stdout's"
+                  " buffer. Check pgrep above:\n       named there = alive and"
+                  " starting up, absent = it died, so read the log in full.")
 
         j = ROOT / "checkpoints" / name / "ladder.json"
         if j.exists():
