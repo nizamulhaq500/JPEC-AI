@@ -196,18 +196,78 @@ rate:
   # The key compute saving: ONE trained model + gain units = the whole RD curve,
   # using the standard's own variable-rate mechanism rather than 4 trainings.
   variable_rate: true
-  beta_range: [-40, 40]        # betaDisplacementLog sampled uniformly in training
-  beta_eval_points: [-32, -16, 0, 16, 32]   # 5 points -> enough for a cubic BD-rate fit
   gain_unit: true              # mref[modelID, comp, c], per-channel
   gain_3d: true                # + spatial quality map (SOQ) -> RoI coding
   int_bits: 12                 # mref/step/sigma_precision are 12-bit signed
+
+  # --- eq. (10): Delta_beta = floor(ln(beta_test/beta_train) * P_beta / S_sigma) --
+  # PAPER, section III-A1, and the arithmetic closes exactly against Phase 5's
+  # sigma grid: the paper's S_sigma is "the quantization step for the entropy
+  # model", which is (ln 54.82 - ln 0.11)/31 = 0.200365 -- the paper's stated 0.2
+  # to one significant figure, 0.18% apart -- and P_beta = 2^7 is 2^sigma_precision.
+  # So Delta_beta is ln(delta_beta) expressed in Isigma's own units, and the gain
+  # unit is an *additive offset on Isigma*. Verified to 1e-7 in models/gain.py.
+  # Consequence: a zero gain vector with Delta_beta = 0 is the exact identity, so
+  # the unit bolts onto a trained checkpoint as a no-op (Table II stage IV).
+  p_beta_precision: 7          # PAPER: "a seven-bit integer of Delta_beta"
+  # CONFIRMED quantization/params.py -- the 12-bit signed field's real limits.
+  # Asymmetric on purpose: Fig. 6 finds the loss steeper when raising the rate
+  # above the anchor than when lowering it. Reaches 5.3x down but only 3.0x up.
+  beta_range: [-1069, 702]     # was [-40, 40]: a guess, in the wrong units
+  # Delta_beta sampled uniformly here during stage III/IV so the gain vector does
+  # not overfit the one rate point the backbone was trained at. Narrower than the
+  # clamp because the far ends saturate the sigma table. OURS.
+  beta_train_sample: [-900, 600]
+  # Nine points across the clamp, anchor included, for a rate ladder from one
+  # model. In Delta_beta units now, not the old [-32..32]. OURS.
+  beta_eval_points: [-1069, -800, -600, -400, -200, 0, 200, 450, 702]
+
+  # --- the four trained models  (PAPER Table II) --------------------------
+  # Stage I/II beta, then the *raised* beta models 1-3 fine-tune at in III/IV.
+  # Model 0 is the exception: one beta throughout, and stage IV trains the gain
+  # unit ALONE (models 1-3 train decoder + gain unit).
+  # Crucially: "the betatrain used to create Delta_beta is consistent with the
+  # betatrain used in training stage I", because stage I has the most epochs --
+  # so the eq. (9) anchor is the stage I value even for models 1-3.
+  models:
+    - {id: 0, beta_train: 0.002, beta_stage34: 0.002,
+       stage3: [decoder, entropy],            stage4: [gain]}
+    - {id: 1, beta_train: 0.007, beta_stage34: 0.03,
+       stage3: [decoder, entropy, gain],      stage4: [decoder, gain]}
+    - {id: 2, beta_train: 0.075, beta_stage34: 0.2,
+       stage3: [decoder, entropy, gain],      stage4: [decoder, gain]}
+    - {id: 3, beta_train: 0.5,   beta_stage34: 1.0,
+       stage3: [decoder, entropy, gain],      stage4: [decoder, gain]}
+  stage_epochs: {I: 64, II: 32, III: 20, IV: 12}   # PAPER Table II
   # CONFIRMED quantization/gain_unit/params.py -- the real 18-entry RD ladder.
-  # The gain unit interpolates between these; the four *trained* base models sit
-  # at beta = 0.002, 0.012, 0.075, 0.5 (paper section VI-I).
   beta_list: [0.0002, 0.0005, 0.001, 0.002, 0.004, 0.007, 0.01, 0.015, 0.03,
               0.05, 0.075, 0.1, 0.2, 0.5, 0.75, 1.0, 2.0, 3.0]
   base_model_beta: 0.002       # CONFIRMED CCS_SGMM/params.py default
-  # CONFIRMED quantization/params.py
+
+  # --- Table I: the 17-entry spatial/channel quality map  (PAPER) ---------
+  # Never signalled as a map; only the control parameters are coded, and the map
+  # is rebuilt by extending channel-wise and/or spatially (Fig. 4). Each latent
+  # element covers a 16x16 image block. Residual-coded by eq. (11)/(12).
+  q_index_range: [-8, 8]
+  q_scale_table: [0.25, 0.3125, 0.375, 0.4375, 0.5, 0.625, 0.75, 0.875, 1.0,
+                  1.25, 1.4375, 1.6875, 2.0, 2.4375, 2.875, 3.375, 4.0]
+
+  # --- bit-rate matching  (PAPER section III-B2; NON-NORMATIVE) -----------
+  # Reference-software encoder search, not part of the bitstream. Costs 3.6-4.8 pp
+  # of BD-rate against the fixed-rate figures, and raises encode time 3-5x.
+  brm:
+    tolerance: 0.10            # "maximum rate difference threshold"
+    bisect_window: 100         # eq. (14)'s fit, then bisect in [d1-100, d1+100]
+    max_iterations: 12
+    # The paper's rule, and it is not "closest to the target": the chosen point is
+    # the one inside the tolerance band that is CLOSEST TO THE MODEL'S DEFAULT RATE
+    # (Fig. 8's purple dot). Staying near the anchor is what preserves the
+    # variable-rate performance, at the cost of landing a full tolerance off target.
+    stay_near_anchor: true
+
+  # CONFIRMED quantization/params.py. These are the *signalling* precisions of the
+  # two fields whose sum is scaler_precision = 10, i.e. how m is stored -- a
+  # different quantity from P_beta above, which is eq. (10)'s unit conversion.
   beta_displacement_precision: 5
   beta_displacement_log_bitdepth: 12
   gain_vector_bitdepth: 6

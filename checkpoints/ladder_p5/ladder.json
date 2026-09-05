@@ -1,0 +1,105 @@
+{
+ "points": [
+  {
+   "beta": 0.002,
+   "lambda255": 130.05,
+   "step": 50000,
+   "valid_bpp": 0.5353347808122635,
+   "valid_psnr": 29.028750896453857,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.4416775173611111,
+   "gap_q_pct": -3.2954689486075095,
+   "gap_pct": 0.0338188070471167,
+   "y_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y_uv",
+   "worst_stream_b": 14.97216796875,
+   "worst_stream_pct": 0.344899147116139,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p5/beta0.002/final.pt"
+  },
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 50000,
+   "valid_bpp": 0.9302686452865601,
+   "valid_psnr": 31.803069591522217,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.7224934895833334,
+   "gap_q_pct": 0.2817921135947316,
+   "gap_pct": 1.6771121995814824,
+   "y_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 104.45166015625,
+   "worst_stream_pct": 4.937332708926168,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p5/beta0.012/final.pt"
+  },
+  {
+   "beta": 0.03,
+   "lambda255": 1950.75,
+   "step": 50000,
+   "valid_bpp": 1.326641596853733,
+   "valid_psnr": 33.520702838897705,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.9831271701388888,
+   "gap_q_pct": 0.2036928631639946,
+   "gap_pct": 0.5896716139813224,
+   "y_oor_pct": 0.00027126736767968396,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 108.886962890625,
+   "worst_stream_pct": 9.492260951458688,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p5/beta0.03/final.pt"
+  },
+  {
+   "beta": 0.075,
+   "lambda255": 4876.875,
+   "step": 50000,
+   "valid_bpp": 1.827503740787506,
+   "valid_psnr": 34.82948112487793,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.3445095486111112,
+   "gap_q_pct": 0.04652695637034876,
+   "gap_pct": 0.6985214665755765,
+   "y_oor_pct": 0.00027126736767968396,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 21.41064453125,
+   "worst_stream_pct": 1.9560435540761354,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p5/beta0.075/final.pt"
+  },
+  {
+   "beta": 0.2,
+   "lambda255": 13005.0,
+   "step": 50000,
+   "valid_bpp": 2.3984920978546143,
+   "valid_psnr": 35.80510902404785,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.7752278645833333,
+   "gap_q_pct": 0.027516525360815787,
+   "gap_pct": 0.5082126023847116,
+   "y_oor_pct": 0.0005425347353593679,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 12.546875,
+   "worst_stream_pct": 0.01261202200554395,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p5/beta0.2/final.pt"
+  }
+ ],
+ "elapsed_s": 121017.5
+}

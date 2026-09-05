@@ -9,8 +9,21 @@
 # data/ is 4.8 GB (DIV2K, Kodak, Flickr2K); checkpoints/ is 2.9 GB and individual
 # files exceed GitHub's 100 MB limit; results/cache/ is rebuilt on the next runbench.
 /data/
-/checkpoints/
 /results/cache/
+# checkpoints/ needs one more layer of care than the others: the *weights* must stay
+# out (2.9 GB, individual files over the 100 MB limit) but each ladder.json is a few
+# KB and is the only durable record of what a run measured. A rented GPU box gets
+# reset, and when one did, eleven checkpoints' numbers went with it -- the losses that
+# mattered were kilobytes, not gigabytes.
+#
+# Hence `/checkpoints/**` and not `/checkpoints/`: an ignored *directory* is never
+# descended into, so no negation inside it can rescue anything. Ignoring the contents
+# instead leaves the tree walkable, `!/checkpoints/**/` keeps the directories
+# themselves visible so git can reach into them, and only then does the last line
+# admit the file we want.
+/checkpoints/**
+!/checkpoints/**/
+!/checkpoints/**/ladder.json
 # cloud/seeds/ is stripped copies of checkpoints/ for upload to the GPU box -- same
 # 100 MB problem, and cloud/make_seed.py regenerates them in seconds. The glob is
 # deliberate: --out takes any directory, and seeds_p6/ (114 MB) was already sitting
@@ -29,6 +42,20 @@
 # and are not ours to redistribute. `docs/` cites and paraphrases; the source stays local.
 paper/paper_text.txt
 paper/imgs/
+
+# The written report is untracked *on purpose*, not by accident. The version that was
+# pushed predates the 9-point full-width ladder, so every result in it is stale, and it
+# was never reviewed. It is being rewritten from scratch as Phase 14 -- once as the
+# report proper, once at more depth for interview preparation. Until then the drafts stay
+# local: 240 KB of prose is raw material for that rewrite, and deleting it would cost
+# real work, but publishing wrong numbers costs more.
+#
+# Note for later: `git rm --cached` takes these out of the *current* tree. The old PDF is
+# still reachable from history, so if it ever needs to be truly gone that is a separate
+# job (filter-repo, force push, and every clone re-cloned).
+/report/
+/JPEG-AI-Report.pdf
+/JPEG-AI-Report.html
 
 # Environment
 .venv/

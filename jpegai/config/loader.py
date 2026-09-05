@@ -302,7 +302,39 @@ def main(argv: list[str] | None = None) -> None:
                 ("hyper_max_symbol == z_range - 1",
                  c.entropy.hyper_max_symbol == c.entropy.z_range - 1),
                 ("the 18-entry beta ladder contains all four base-model betas",
-                 all(b in c.rate.beta_list for b in (0.002, 0.075, 0.5))),
+                 all(b in c.rate.beta_list
+                     for b in (m["beta_train"] for m in c.rate.models))),
+                # Phase 8. Eq. (10)'s P_beta is 2^sigma_precision and its S_sigma is
+                # the sigma grid's log step, which is what makes Delta_beta an
+                # additive offset on Isigma rather than a second quantiser. If these
+                # two ever drift apart the gain unit still runs -- encoder and decoder
+                # share the constant either way -- but sigma' stops being delta_beta
+                # times sigma, and every rate request lands somewhere else.
+                ("p_beta_precision == sigma_precision  (eq. 10's P_beta)",
+                 c.rate.p_beta_precision == c.entropy.sigma_precision),
+                # The clamp is written down twice, from two different files of the
+                # reference software. Two copies that can disagree is one copy too
+                # many, so the loader makes them agree or fails.
+                ("beta_range == bdl_clipping_range",
+                 list(c.rate.beta_range) == list(c.entropy.bdl_clipping_range)),
+                ("the anchor is on the eval ladder and the ladder is inside the clamp",
+                 0 in c.rate.beta_eval_points
+                 and min(c.rate.beta_eval_points) >= c.rate.beta_range[0]
+                 and max(c.rate.beta_eval_points) <= c.rate.beta_range[1]),
+                ("the training sample range is inside the clamp",
+                 c.rate.beta_train_sample[0] >= c.rate.beta_range[0]
+                 and c.rate.beta_train_sample[1] <= c.rate.beta_range[1]),
+                # Table I. 17 entries, and index 0 must be scale 1.0 -- that is the
+                # entry the anchor uses, so if it were anything else a picture with
+                # no quality map would be coded at the wrong rate.
+                ("Table I has 17 entries spanning q_index_range, with 1.0 at index 0",
+                 len(c.rate.q_scale_table) == 17
+                 == c.rate.q_index_range[1] - c.rate.q_index_range[0] + 1
+                 and c.rate.q_scale_table[-c.rate.q_index_range[0]] == 1.0),
+                ("four variable-rate models with distinct ids and rising beta",
+                 [m["id"] for m in c.rate.models] == [0, 1, 2, 3]
+                 and [m["beta_train"] for m in c.rate.models]
+                 == sorted(m["beta_train"] for m in c.rate.models)),
                 ("synthesis_width is analysis_width reversed in stage count",
                  len(ch.synthesis_width) == len(ch.analysis_width)
                  == c.geometry.analysis_stages),

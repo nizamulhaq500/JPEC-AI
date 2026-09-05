@@ -64,26 +64,124 @@ the compute *by implementing a feature of the standard*. Lead with this in your 
 
 ## Phase map
 
+This is the map as originally scoped. **[Phase map, revised](#phase-map-revised) below is the
+one to schedule from** — it marks what is built, what is cut, and why. The annotations here
+are the short version.
+
 ```
- P1  Environment, data, baselines            ┐
- P2  Metrics + BD-rate harness               │ Weeks 1–2   foundation
- P3  Reproduce a scale hyperprior            ┘
- P4  Two-branch YCbCr architecture           ┐
- P5  Mean+scale, split hyper decoders        │ Weeks 3–5   the codec core
- P6  MCM (4-stage checkerboard)              ┘ ◄── MINIMUM DEFENSIBLE CORE
- P7  Three synthesis transforms              ┐
- P8  Variable rate: gain / 3D gain / RoI     │ Weeks 6–8   the JPEG AI part
- P9  me-tANS + skip mode + real codestream   ┘
- P10 RVS + LSBS + post-filters               ┐
- P11 Integer entropy path + bit-exactness    │ Weeks 9–11  the standards part
- P12 Tiling, regions, arbitrary size, progressive ┘
+ P1  Environment, data, baselines            ┐                        built
+ P2  Metrics + BD-rate harness               │ Weeks 1–2   foundation  built
+ P3  Reproduce a scale hyperprior            ┘                         built
+ P4  Two-branch YCbCr architecture           ┐                        built
+ P5  Mean+scale, split hyper decoders        │ Weeks 3–5   the codec core  built
+ P6  MCM (4-stage checkerboard)              ┘ ◄── MINIMUM DEFENSIBLE CORE  built (1.8% rate)
+ P7  Three synthesis transforms              ┐                        OPTIONAL
+ P8  Variable rate: gain / 3D gain / RoI     │ Weeks 6–8   the JPEG AI part  built, untrained
+ P9  me-tANS + skip mode + real codestream   ┘                        me-tANS CUT
+ P10 RVS + LSBS + post-filters               ┐                        ◄── NEXT
+ P11 Integer entropy path + bit-exactness    │ Weeks 9–11  the standards part  CUT
+ P12 Tiling, regions, arbitrary size, progressive ┘                   CUT except sizes
  P13 Evaluation, ablation, benchmark report  ┐ Weeks 12–14 the deliverable
  P14 Demo app, CLI, report, slides           ┘
- (B) Conformance decoder against real ONNX   — optional, parallel
+ (B) Conformance decoder against real ONNX   — optional, parallel     CUT (no T.840-1)
 ```
 
 Each phase below has: **objective**, **build**, **paper reference**, **acceptance test**
 (the thing that proves it works), **pitfalls**.
+
+---
+
+## Phase map, revised
+
+The fourteen phases above were scoped before anything was measured. Seven are built, and the
+measurements have since made the ordering of the remaining seven a decision rather than a
+list. This section is that decision. **It supersedes the phase map for scheduling purposes;
+the phase sections below remain the specification** — Phase 10's detail in particular is the
+build sheet for the next piece of work, and the cut phases keep their sections so that "cut"
+stays a documented choice rather than a gap.
+
+### Built
+
+| | | Evidence |
+|---|---|---|
+| **P1–P2** | environment, datasets, four anchor codecs, 7 metrics, BD-rate harness | anchors land where the literature puts them |
+| **P3** | mean-scale hyperprior, own CDF construction, rANS, training loop | bit-exact round trip in the self-test |
+| **P4** | two-branch YCbCr, separate luma / chroma latents | `results/p3f_kodak.*` separates architecture from width |
+| **P5** | residual coding, split hyper decoders, integer σ index | one-ULP hazard pinned; see docs/00 |
+| **P6** | 4-stage MCM, coset order from the WG1 reference software | built and complexity-verified — **worth 1.8% rate, not the +0.60 dB first claimed; see below** |
+| **P8** | gain unit (eqs 11–15), 3D quality map / RoI, bit-rate matching, the 4-stage schedule, Δβ sweep through `runbench` | code path verified end to end on a smoke checkpoint; **no trained weights yet** |
+
+### The three measurements that set the new order
+
+1. **The training budget dominates everything else.** 4× the steps at one β is worth
+   **+0.90 dB at matched rate**, equivalently **15.6% fewer bits at matched PSNR**, on Kodak
+   (`ladder_p6_long` vs `ladder_p6`, PCHIP over the nine-point curve), and the curve had not
+   flattened. Nothing architectural left on the list has a published effect that large.
+2. **Phase 6 was credited with a gain it did not earn — but the paper's specific design
+   choice is real.** The controls that did not exist when Phase 6 was declared done:
+   `ladder_p5_cont200` (no context model) and `ladder_p6a_mcm1_200` (one stage), both at the
+   same seed, the same 200,000 steps, the same tier and the same β 0.012 as `ladder_p6_long`.
+   On 24 Kodak images, with PSNR matched to 0.011 dB and MS-SSIM equal to four decimals:
+
+   | MCM stages | bpp | vs none |
+   |---|---|---|
+   | none | 0.9620 | — |
+   | 1 | 0.9636 | +0.17% |
+   | **4 (the paper's)** | **0.9446** | **−1.81%** |
+
+   So the 4-stage MCM earns **1.8% rate**, a 1-stage MCM earns nothing, and the +0.60 dB
+   originally attributed to Phase 6 was the extra 50,000 steps. Two lessons, both cheap to
+   apply from here: **build the control before crediting a phase**, and the stage count is the
+   contribution — not the existence of a context model. At the 50,000-step budget the whole
+   three-way spread is inside 0.07 dB, so this tool needs budget before it appears at all,
+   which is consistent with the paper measuring it at convergence.
+3. **The losing metrics are the ones Phase 10 exists to fix.** On Kodak this codec loses only
+   VMAF (+4.6%) and PSNR-HVS (+11.3%) against JPEG, and against VVC those two are its worst
+   columns (+79.2%, +80.9%). The paper puts RVS's gain in **FSIM (6.7 pp) and VMAF (6.1 pp)**
+   at *zero* added compute. That is the only remaining phase whose expected effect is both
+   large and pointed at the actual deficit.
+
+### The order
+
+**1. Train the Phase 8 variable-rate checkpoint.** Stage III/IV of the Table II schedule, on
+a rented GPU. This is first because it is blocked on nothing but compute, and it unblocks two
+of Phase 8's four acceptance tests (the ≥10× span from one model, and the variable-rate
+BD-rate penalty that the paper does not publish). It also makes the RoI demo possible, which
+Phase 14 wants.
+
+**2. Phase 10 — RVS, LSBS, and the four post-filters.** Reason 3 above. Build order within
+the phase: RVS first and alone (2.2 pp of the paper's 20.2 at zero MAC cost, and the tables
+are *learnable* — the Phase 10 section below has the recipe), then LSBS, then the filters in
+the paper's own value order. Each one lands with its own row in the ablation table, so a
+filter that hurts is a result, not a failure — the paper's own EFE rows are negative.
+
+**3. Phases 13–14 — the deliverable.** The ablation table (P13), then `jpegai encode` /
+`decode` / `inspect` as a real CLI, the RoI + progressive demo, and two written reports: the
+official one, and a deeper one for interview preparation. The existing draft report is
+discarded — it predates every number above.
+
+**Optional, in this order, only if 13–14 land early:** Phase 7 (three synthesis transforms).
+It has a concrete justification the original plan could not have known: this decoder costs
+**325 kMAC/pxl** against the paper's 8 / 28 / 215 for SOP / BOP / HOP, so there is currently
+no complexity axis at all and no Table III equivalent to build. It is off the critical path
+only because a Table III with one row is still an honest Table III.
+
+### Cut, and why
+
+| Cut | Reason |
+|---|---|
+| **P11 — integer entropy path, cross-device bit-exactness** | The single largest build on the list and the one with no BD-rate at all. Its value is "this is a standard, not a model", which the codestream work in P9 already carries at a fraction of the cost. The one-ULP hazard it protects against is already *documented and pinned* (docs/00), which is the part an interviewer can be shown. |
+| **P12 — tiling, regions, progressive, random access** | Five demos with no rate effect. **Arbitrary image sizes are kept** (item 1, layer-based cropping) because without them the codec only accepts multiples of 64, which is a correctness limit rather than a feature. Progressive decode is kept *if* it falls out of P14's demo for free. |
+| **me-tANS (part of P9)** | A faster entropy coder for a codec that is 60 points off the standard is optimising the wrong axis. rANS already produces real, decodable bytes, which is what every number here rests on. **Skip mode is kept** — it is a rate tool, not a speed tool. |
+| **Track B — conformance decoder** | Gated on T.840-1 and the official ONNX models, neither of which is in hand. Unchanged from §0. |
+
+### What "done" means for this project
+
+The deliverable is not the paper's −20.2%. It is: every architectural idea in the paper either
+implemented or explicitly and defensibly cut; every number traceable to a JSON produced by a
+command in this repo; and the gap to the standard **decomposed** — budget, tools, MAC
+efficiency — rather than apologised for. The decomposition is the contribution a single
+student on rented GPU hours can actually make.
 
 ---
 

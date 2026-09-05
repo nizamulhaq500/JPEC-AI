@@ -56,6 +56,8 @@ from jpegai.models.entropy import (
     FactorizedPrior, GaussianConditional, build_scale_table,
 )
 from jpegai.models.hyper import SigmaIndex, SplitHyperBranch
+from jpegai.models.gain import (reject_gain, spatial_bits, spatial_reconstruct,
+                                spatial_residual)
 from jpegai.models.hyperprior import (
     AnalysisTransform, HyperAnalysis, HyperSynthesisScale, SynthesisTransform,
 )
@@ -188,6 +190,23 @@ class SecondarySynthesis(nn.Module):
         return self.body(torch.cat([y_uv, y_luma], dim=-3))
 
 
+def _no_gain(delta_beta, q_index) -> None:
+    """Refuse a quality map on the Phase 4 mean-scale branch.
+
+    This branch's `h_s` emits sigma directly as a raw network output. There is no
+    integer sigma index for an additive offset to live on, so eq. (10)'s change of
+    units has nothing to change units *into*: the gain would have to become a
+    multiply on a float sigma, which is a different mechanism with a different
+    quantisation error and would not interoperate with the split-hyper bitstream.
+    `TwoBranchCodec.__init__` already rejects `gain=True` without `split_hyper=True`;
+    these three methods accept the kwargs only so the two branch types stay
+    signature-compatible, and refuse so that a rate request is never dropped.
+    """
+    reject_gain(delta_beta, q_index, "HyperpriorBranch",
+                "It predicts sigma directly and has no integer index to offset; "
+                "gain=True requires split_hyper=True.")
+
+
 class HyperpriorBranch(nn.Module):
     """One branch's side-information path: h_a, h_s, and the factorised prior for z.
 
@@ -230,7 +249,9 @@ class HyperpriorBranch(nn.Module):
         return scales, means
 
     def forward(self, y: Tensor, gc: GaussianConditional, *,
-                noise: bool | None = None, ste: bool = True) -> dict:
+                noise: bool | None = None, ste: bool = True,
+                delta_beta=0, q_index: Tensor | None = None) -> dict:
+        _no_gain(delta_beta, q_index)
         z = self.h_a(y)
         z_hat, z_lik = self.entropy_bottleneck(z, noise=noise, ste=ste)
         scales, means = self.params(z_hat)
@@ -239,7 +260,9 @@ class HyperpriorBranch(nn.Module):
                 "z": z, "z_hat": z_hat, "scales": scales, "means": means}
 
     @torch.no_grad()
-    def compress(self, y: Tensor, gc: GaussianConditional) -> dict:
+    def compress(self, y: Tensor, gc: GaussianConditional, *,
+                 delta_beta=0, q_index: Tensor | None = None) -> dict:
+        _no_gain(delta_beta, q_index)
         z = self.h_a(y)
         z_strings = self.entropy_bottleneck.compress(z)
         # From the *decoded* z_hat, never from z. See ScaleHyperprior.compress.
@@ -250,13 +273,15 @@ class HyperpriorBranch(nn.Module):
                 "z_strings": z_strings, "z_shape": tuple(z.shape[-2:])}
 
     @torch.no_grad()
-    def decompress(self, part: dict, gc: GaussianConditional, device) -> dict:
+    def decompress(self, part: dict, gc: GaussianConditional, device, *,
+                   delta_beta=0, q_index: Tensor | None = None) -> dict:
         """`{y_hat, z_hat}`. Both, because the gate checks the hyper latent too.
 
         Returning only `y_hat` would leave `z_hat` unverifiable from the decoder
         side, and a `z_hat` mismatch is the failure that makes every sigma wrong --
         it shows up as a large rate gap with no other symptom.
         """
+        _no_gain(delta_beta, q_index)
         z_hat = self.entropy_bottleneck.decompress(
             part["z_strings"], tuple(part["z_shape"]), device=device)
         scales, means = self.params(z_hat)
@@ -303,6 +328,8 @@ class TwoBranchCodec(nn.Module):
         sigma_precision: int = 7,
         precision: int = 16,
         pad_multiple: int = 64,
+        gain: bool = False,
+        scaler_precision: int = 10,
     ):
         super().__init__()
         self.fmt = get_format(internal_format)
@@ -317,6 +344,17 @@ class TwoBranchCodec(nn.Module):
         self.fused_hyper = bool(fused_hyper)
         self.mcm = bool(mcm)
         self.mcm_stages = int(mcm_stages)
+        # Phase 8. Variable rate needs the split hyper path: the gain offset is added
+        # to `Isigma`, and `HyperpriorBranch` has no `Isigma` -- it predicts sigma
+        # directly, with no integer grid for an integer offset to live on.
+        self.gain = bool(gain)
+        if gain and not split_hyper:
+            raise ValueError(
+                "gain=True needs split_hyper=True. The quality map is an additive "
+                "offset on the integer sigma index, which only the split hyper path "
+                "has; on the mean-scale path sigma is a raw network output and there "
+                "is no index to offset. Set entropy.split_hyper_decoder: true."
+            )
         if split_hyper and not mean_scale:
             raise ValueError(
                 "split_hyper implies mean_scale: eq. (1)/(2) code the residual "
@@ -374,11 +412,13 @@ class TwoBranchCodec(nn.Module):
                                  order=mcm_order or GROUP_ORDER,
                                  scale_layers=scale_layers,
                                  activation_name=activation_name,
-                                 precision=precision)
+                                 precision=precision, gain=gain,
+                                 scaler_precision=scaler_precision)
             return SplitHyperBranch(latent, hyper, sigma_index=self.sigma_index,
                                     fused=fused_hyper, scale_layers=scale_layers,
                                     activation_name=activation_name,
-                                    precision=precision)
+                                    precision=precision, gain=gain,
+                                    scaler_precision=scaler_precision)
 
         # MCM is luma-only: `entropy.mcm_on_secondary: false`, and the paper says why
         # outright -- "considering the trade-off between complexity and coding gain,
@@ -402,18 +442,62 @@ class TwoBranchCodec(nn.Module):
     def _to_rgb(self, y_hat: Tensor, uv_hat: Tensor, pad) -> Tensor:
         return unpad(ycbcr_to_rgb_bt709(merge_planes(y_hat, uv_hat)), tuple(pad))
 
+    # -- Phase 8: the rate request -----------------------------------------
+    def split_delta_beta(self, delta_beta) -> tuple:
+        """One rate request -> the two `D_beta` the two components actually use.
+
+        The paper signals **two** `D_beta`, one per component, "usually set to the same
+        value" -- and that "usually" is the flexible colour bit allocation, so the
+        plumbing has to keep them separate even though every ordinary call sets them
+        alike. Accepts a scalar (both components), a 2-sequence, or a mapping with
+        `y`/`uv` keys, and refuses anything that only names one component: a rate
+        request that silently left chroma at its anchor would be very hard to see.
+        """
+        if isinstance(delta_beta, dict):
+            unknown = set(delta_beta) - {"y", "uv"}
+            if unknown:
+                raise KeyError(f"delta_beta keys must be 'y'/'uv', got {sorted(unknown)}")
+            if set(delta_beta) != {"y", "uv"}:
+                raise KeyError(f"delta_beta needs both 'y' and 'uv', got "
+                               f"{sorted(delta_beta)}")
+            return delta_beta["y"], delta_beta["uv"]
+        if isinstance(delta_beta, (tuple, list)):
+            if len(delta_beta) != 2:
+                raise ValueError(f"delta_beta as a sequence must be (y, uv), got "
+                                 f"{len(delta_beta)} values")
+            return tuple(delta_beta)
+        return delta_beta, delta_beta
+
+    def gain_parameters(self):
+        """Just the gain vectors -- Table II's stage IV trains these and nothing else.
+
+        Returned as a list so an optimiser can take it directly, and empty rather than
+        raising when there is no gain unit, so a training script can ask unconditionally
+        and discover it has nothing to train from the length.
+        """
+        return [b.gain.vector for b in (self.branch_y, self.branch_uv)
+                if getattr(b, "gain", None) is not None]
+
     # -- differentiable path -----------------------------------------------
     def forward(self, x: Tensor, *, noise: bool | None = None,
-                ste: bool = True) -> dict:
+                ste: bool = True, delta_beta=0, q_index: Tensor | None = None) -> dict:
         y, uv, supp, pad = self._to_planes(x)
 
         y_lat = self.g_a_y(y)
         uv_lat = self.g_a_uv(uv, supp)
 
+        # One spatial map serves both branches, and that is not an approximation: the
+        # secondary analysis lands its latent on the *luma* latent's grid (see
+        # `SecondaryAnalysis` and `stride_schedule`), so both are /16 of the input,
+        # which is exactly the paper's "the spatial dimensions of the primary and
+        # secondary components are identical in the latent space".
+        d_y, d_uv = self.split_delta_beta(delta_beta)
         out_y = self.branch_y(y_lat, self.gaussian_conditional,
-                              noise=noise, ste=ste)
+                              noise=noise, ste=ste,
+                              delta_beta=d_y, q_index=q_index)
         out_uv = self.branch_uv(uv_lat, self.gaussian_conditional,
-                                noise=noise, ste=ste)
+                                noise=noise, ste=ste,
+                                delta_beta=d_uv, q_index=q_index)
 
         y_rec = self.g_s_y(out_y["y_hat"])
         uv_rec = self.g_s_uv(out_uv["y_hat"], out_y["y_hat"])      # eq. (3)
@@ -451,6 +535,14 @@ class TwoBranchCodec(nn.Module):
         if "r_hat" in out_y:
             out["r_hat"] = out_y["r_hat"]
             out["mcm_y_hat"] = out_y["mcm_y_hat"]
+        # Phase 8 only. The requested rate point, and the multipliers it produced, so
+        # the training log can watch a gain vector that has stopped moving and the
+        # round-trip gate can check that `Isigma + o` stayed inside the table.
+        if out_y.get("gain") is not None:
+            out["delta_beta"] = (d_y, d_uv)
+            out["gain"], out["gain_uv"] = out_y["gain"], out_uv["gain"]
+            out["gain_offset"] = out_y["gain_offset"]
+            out["gain_offset_uv"] = out_uv["gain_offset"]
         return out
 
     # -- optimiser bookkeeping ---------------------------------------------
@@ -492,6 +584,8 @@ class TwoBranchCodec(nn.Module):
                 prior += f"+mcm{self.mcm_stages}"
         else:
             prior = "mean-scale" if self.mean_scale else "scale-only"
+        if self.gain:
+            prior += "+gain"
         return (f"{type(self).__name__}  internal {self.fmt.name}  {prior}  "
                 f"luma={self.luma_latent}/{self.luma_hyper}  "
                 f"chroma={self.chroma_latent}/{self.chroma_hyper}  "
@@ -538,6 +632,50 @@ class TwoBranchCodec(nn.Module):
         return [("", self.branch_y.entropy_bottleneck),
                 ("_uv", self.branch_uv.entropy_bottleneck)]
 
+    def training_parts(self) -> dict:
+        """`{part: [(label, module)]}` -- Table II's "Trained Codec Parts" as modules.
+
+        Four buckets, and the surprising one is `entropy`. The paper's stage III trains
+        "decoder, entropy network", and it would be easy to read the hyper *analysis*
+        `h_a` as encoder-side work, since it only ever runs on the encoder. The
+        reference software settles it: `Net.parameters()` returns four groups and
+        `entropy` holds "both hyper-encoders, both hyper-decoders, both hyper-scale-
+        decoders, both hyper entropy models, `context_Y`", while `analysis` is
+        `encoder_Y`/`encoder_UV` alone (`docs/architecture/13-training.md` section 8.4).
+        So `h_a` is part of the entropy network, not of the encoder, and a stage III
+        that froze it would be training something the standard's own schedule does not.
+
+        Named after the paper's vocabulary rather than the software's, because
+        `config.rate.models[*].stage3` is written in the paper's words. The aliases are
+        `analysis -> encoder`, `synthesis -> decoder`, `gain_unit -> gain`; see
+        :data:`jpegai.train.stages.ALIASES`.
+
+        Every parameter of this model appears under exactly one part -- asserted, not
+        assumed, by :func:`jpegai.train.stages.check_partition`. That invariant is the
+        whole value of this method: a freeze implemented as "everything except these
+        modules" is only correct if the buckets are a partition, and a parameter that
+        belongs to no bucket would be silently frozen in every stage while a parameter
+        in two would be trained by a stage that Table II says should not touch it.
+        """
+        parts: dict[str, list] = {
+            "encoder": [("g_a_y", self.g_a_y), ("g_a_uv", self.g_a_uv)],
+            "decoder": [("g_s_y", self.g_s_y), ("g_s_uv", self.g_s_uv)],
+            "entropy": [],
+            "gain": [],
+        }
+        for suffix, br in (("_y", self.branch_y), ("_uv", self.branch_uv)):
+            parts["entropy"] += [(f"h_a{suffix}", br.h_a), (f"h_s{suffix}", br.h_s),
+                                 (f"eb{suffix}", br.entropy_bottleneck)]
+            for name in ("h_scale", "mcm"):
+                mod = getattr(br, name, None)
+                if mod is not None:
+                    parts["entropy"].append((f"{name}{suffix}", mod))
+            # `branch.gain` is the GainUnit; `self.gain` is the bool that built it.
+            unit = getattr(br, "gain", None)
+            if unit is not None:
+                parts["gain"].append((f"gain{suffix}", unit))
+        return parts
+
     def coder_rows(self, out: dict, suffix: str = "") -> Tensor:
         """The CDF row each `y{suffix}` symbol will actually be coded with.
 
@@ -556,19 +694,79 @@ class TwoBranchCodec(nn.Module):
 
     # -- real bitstream ----------------------------------------------------
     @torch.no_grad()
-    def compress(self, x: Tensor) -> dict:
+    def precompress(self, x: Tensor) -> dict:
+        """Fig. 9's cache: everything about `x` that the rate point cannot change.
+
+        Bit-rate matching encodes the same picture roughly ten times -- two probes for
+        eq. (14)'s linear fit, a bisection, and a validation -- and all but the
+        arithmetic coding is identical across those. Caching is possible only because
+        the gain sits *after* the prediction: `z`, `mu` and `Isigma` come off the
+        ungained latent, so `code_cached` re-runs no network at all.
+
+        Requires the gain unit, because without one there is only one rate point and a
+        cache would be an invitation to a stale-tensor bug for no gain.
+        """
+        if not self.tables_ready:
+            raise RuntimeError("entropy tables not built; call model.update()")
+        if not self.gain:
+            raise RuntimeError("precompress() is for the rate search, which needs a "
+                               "gain unit; use compress() on a fixed-rate model")
+        y, uv, supp, pad = self._to_planes(x)
+        return {"luma": self.branch_y.precode(self.g_a_y(y)),
+                "chroma": self.branch_uv.precode(self.g_a_uv(uv, supp)),
+                "shape": tuple(x.shape[-2:]), "pad": tuple(pad),
+                "internal_format": self.fmt.name}
+
+    @torch.no_grad()
+    def compress_cached(self, cache: dict, *, delta_beta=0,
+                        q_index: Tensor | None = None) -> dict:
+        """One packet at one rate point, from a `precompress` cache."""
+        d_y, d_uv = self.split_delta_beta(delta_beta)
+        packet = {
+            "luma": self.branch_y.code_cached(cache["luma"],
+                                              self.gaussian_conditional,
+                                              delta_beta=d_y, q_index=q_index),
+            "chroma": self.branch_uv.code_cached(cache["chroma"],
+                                                 self.gaussian_conditional,
+                                                 delta_beta=d_uv, q_index=q_index),
+            "shape": cache["shape"], "pad": cache["pad"],
+            "internal_format": cache["internal_format"],
+        }
+        return self._add_header(packet, d_y, d_uv, q_index)
+
+    def _add_header(self, packet: dict, d_y, d_uv, q_index) -> dict:
+        """The picture header, such as it is.
+
+        Present only when a gain unit exists, so a Phase 5 packet is byte-for-byte what
+        it was and `packet_bytes` keeps meaning the same thing. `jpegai/codestream/`
+        will turn these into two 12-bit fields and a substream; until it exists they
+        travel as python objects, and `header_bytes` is what charges them to the rate.
+        """
+        if self.gain:
+            packet["delta_beta"] = (int(d_y), int(d_uv))
+            if q_index is not None:
+                packet["q_residual"] = spatial_residual(q_index).cpu()
+        return packet
+
+    @torch.no_grad()
+    def compress(self, x: Tensor, *, delta_beta=0,
+                 q_index: Tensor | None = None) -> dict:
         if not self.tables_ready:
             raise RuntimeError("entropy tables not built; call model.update()")
         y, uv, supp, pad = self._to_planes(x)
         y_lat = self.g_a_y(y)
         uv_lat = self.g_a_uv(uv, supp)
-        return {
-            "luma": self.branch_y.compress(y_lat, self.gaussian_conditional),
-            "chroma": self.branch_uv.compress(uv_lat, self.gaussian_conditional),
+        d_y, d_uv = self.split_delta_beta(delta_beta)
+        packet = {
+            "luma": self.branch_y.compress(y_lat, self.gaussian_conditional,
+                                           delta_beta=d_y, q_index=q_index),
+            "chroma": self.branch_uv.compress(uv_lat, self.gaussian_conditional,
+                                              delta_beta=d_uv, q_index=q_index),
             "shape": tuple(x.shape[-2:]),
             "pad": tuple(pad),
             "internal_format": self.fmt.name,
         }
+        return self._add_header(packet, d_y, d_uv, q_index)
 
     @torch.no_grad()
     def decompress(self, packet: dict, device=None, *,
@@ -580,13 +778,20 @@ class TwoBranchCodec(nn.Module):
         secondary synthesis transform, and here it pays for neither -- the chroma
         strings are simply never read. The output is a grey image with correct luma,
         which is what `Cb = Cr = 0.5` means.
+
+        The rate point is read from the packet, never from an argument. A decoder that
+        had to be *told* `D_beta` would not be a decoder.
         """
         if not self.tables_ready:
             raise RuntimeError("entropy tables not built; call model.update()")
         device = device or next(self.parameters()).device
+        d_y, d_uv = packet.get("delta_beta", (0, 0))
+        q_index = None
+        if packet.get("q_residual") is not None:
+            q_index = spatial_reconstruct(packet["q_residual"]).to(device)
 
         dec_y = self.branch_y.decompress(packet["luma"], self.gaussian_conditional,
-                                         device)
+                                         device, delta_beta=d_y, q_index=q_index)
         y_hat = dec_y["y_hat"]
         y_rec = self.g_s_y(y_hat)
 
@@ -596,7 +801,8 @@ class TwoBranchCodec(nn.Module):
                                 dtype=y_rec.dtype, device=y_rec.device)
         else:
             dec_uv = self.branch_uv.decompress(
-                packet["chroma"], self.gaussian_conditional, device)
+                packet["chroma"], self.gaussian_conditional, device,
+                delta_beta=d_uv, q_index=q_index)
             uv_rec = self.g_s_uv(dec_uv["y_hat"], y_hat)
 
         x_hat = self._to_rgb(y_rec, uv_rec, packet["pad"])
@@ -611,6 +817,23 @@ class TwoBranchCodec(nn.Module):
 
     # -- accounting --------------------------------------------------------
     @staticmethod
+    def header_bytes(packet: dict) -> int:
+        """The side information Phase 8 adds: two `D_beta` fields plus a spatial map.
+
+        Charged, not waved away. Two 12-bit fields are three bytes, which is under
+        0.01% of a Kodak packet -- but a spatial quality map is per-picture data, and
+        omitting it would report a rate the decoder cannot actually work from. The
+        map's cost is `spatial_bits`' order-0 estimate rounded up to whole bytes;
+        Phase 12's substream will replace the estimate with a measurement.
+        """
+        if "delta_beta" not in packet:
+            return 0
+        total = 3                                     # two 12-bit header fields
+        if packet.get("q_residual") is not None:
+            total += -(-int(spatial_bits(packet["q_residual"])) // 8)
+        return total
+
+    @staticmethod
     def packet_bytes(packet: dict, *, luma_only: bool = False) -> int:
         """Payload bytes. `luma_only` counts what a luma-only decoder must receive."""
         parts = ["luma"] if luma_only else ["luma", "chroma"]
@@ -618,7 +841,9 @@ class TwoBranchCodec(nn.Module):
         for p in parts:
             for key in ("y_strings", "z_strings"):
                 total += sum(len(s) for s in packet[p][key])
-        return total
+        # A luma-only decoder still needs the header: it needs `D_beta` for luma, and
+        # the spatial map is shared between the components rather than duplicated.
+        return total + TwoBranchCodec.header_bytes(packet)
 
     @staticmethod
     def stream_bytes(packet: dict) -> dict[str, int]:
@@ -630,14 +855,25 @@ class TwoBranchCodec(nn.Module):
         The Phase 5 median-shift bug read as +1.85% overall and was +63% on `z_uv`
         alone; the aggregate was too small to act on and the split was unambiguous.
         Keys match `likelihoods` so the gate can pair each stream with its estimate
-        without a translation table.
+        without a translation table. Phase 8 adds a fifth key, `header`, **only when
+        the packet carries one** -- the two `D_beta` fields and the spatial map are not
+        entropy-coded by this model, so there is no likelihood to pair them with, and
+        the rate gate skips any stream it has no estimate for. Adding the key
+        unconditionally would break the `sorted(likelihoods) == sorted(stream_bytes)`
+        identity for every Phase 5 and Phase 6 model, which is worth more than a
+        uniform key set: the sum staying equal to `packet_bytes` is what catches an
+        under-reported rate, and it holds either way.
         """
-        return {
+        out = {
             "y": sum(len(s) for s in packet["luma"]["y_strings"]),
             "z": sum(len(s) for s in packet["luma"]["z_strings"]),
             "y_uv": sum(len(s) for s in packet["chroma"]["y_strings"]),
             "z_uv": sum(len(s) for s in packet["chroma"]["z_strings"]),
         }
+        header = TwoBranchCodec.header_bytes(packet)
+        if header:
+            out["header"] = header
+        return out
 
     @staticmethod
     def estimated_bits(out: dict) -> tuple[float, float]:
@@ -651,7 +887,8 @@ class TwoBranchCodec(nn.Module):
 
 def build_two_branch(config, *, mean_scale: bool = True,
                      split_hyper: bool = False, fused_hyper: bool = False,
-                     mcm: bool = False, mcm_stages: int | None = None):
+                     mcm: bool = False, mcm_stages: int | None = None,
+                     gain: bool = False):
     """Instantiate from a loaded `jpegai.config` object.
 
     Chroma widths come from `secondary_latent`/`hyper_secondary_latent`, which are
@@ -662,12 +899,18 @@ def build_two_branch(config, *, mean_scale: bool = True,
     the *sigma representation* and `scaler_precision: 10` belongs to the gain
     vectors; neither is the rANS coder's, and passing one of them here would quietly
     shrink the CDF tables. `sigma_precision` *is* passed, but to the `SigmaIndex`,
-    which is the one place it belongs.
+    which is the one place it belongs -- and `scaler_precision` is now passed too, to
+    the `GainUnit`, which is the other.
 
     `mcm_stages=None` takes `entropy.mcm_stages`, which is 4 and marked STRUCTURAL.
     The coset order comes from `entropy.mcm_group_order` rather than from a default
     in the model, because that list is the thing docs/06 §5 derived from the reference
     software and the config validator already checks it covers the 2x2 tile once.
+
+    `gain` is a *caller's* flag rather than a config field, exactly like `split_hyper`
+    and `mcm`: which phase's model to build is a decision of the script doing the
+    building, and putting it in the yaml would make two configs differ by something
+    that is not a codec constant.
     """
     ch, ent = config.channels, config.entropy
     return TwoBranchCodec(
@@ -689,6 +932,8 @@ def build_two_branch(config, *, mean_scale: bool = True,
         scale_levels=ent.sigma_quant_level,
         sigma_precision=ent.sigma_precision,
         pad_multiple=config.geometry.total_downsample,
+        gain=gain,
+        scaler_precision=ent.scaler_precision,
     )
 
 

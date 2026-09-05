@@ -1,0 +1,26 @@
+{
+ "points": [
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 50000,
+   "valid_bpp": 0.9561124294996262,
+   "valid_psnr": 32.58190894126892,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.6949869791666666,
+   "gap_q_pct": 0.036038495652799346,
+   "gap_pct": 0.8539031691422496,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 13.9375,
+   "worst_stream_pct": 0.034222557115606254,
+   "path": "/root/JPEC-AI/checkpoints/sweep_w6/beta0.012/final.pt"
+  }
+ ],
+ "elapsed_s": 5513.5
+}

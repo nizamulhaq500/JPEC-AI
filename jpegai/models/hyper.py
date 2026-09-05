@@ -80,6 +80,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from jpegai.models.entropy import Clamp, FactorizedPrior, GaussianConditional
+from jpegai.models.gain import GainUnit
 from jpegai.models.layers import activation, conv, conv_shuffle
 
 
@@ -355,7 +356,8 @@ class SplitHyperBranch(nn.Module):
 
     def __init__(self, latent: int, hyper: int, *, sigma_index: SigmaIndex,
                  fused: bool = False, scale_layers: int = 2,
-                 activation_name: str = "relu", precision: int = 16):
+                 activation_name: str = "relu", precision: int = 16,
+                 gain: bool = False, scaler_precision: int = 10):
         super().__init__()
         self.latent, self.hyper = int(latent), int(hyper)
         self.fused = bool(fused)
@@ -375,6 +377,12 @@ class SplitHyperBranch(nn.Module):
                                              init_index=init,
                                              activation_name=activation_name)
         self.entropy_bottleneck = FactorizedPrior(hyper, precision=precision)
+        # Phase 8. `None` rather than a zero unit when disabled, so the ungained path
+        # runs the *same* code it ran before and a checkpoint from Phase 5 loads with
+        # no unexpected keys. A zero-initialised unit is already the identity, so
+        # turning this on for an existing checkpoint changes no number until it trains.
+        self.gain = (GainUnit(latent, log_k=sigma_index.log_k, step=sigma_index.step,
+                              scaler_precision=scaler_precision) if gain else None)
 
     # -- prediction ---------------------------------------------------------
     def predict(self, z_hat: Tensor, *, quantise: bool = False) -> dict:
@@ -409,13 +417,60 @@ class SplitHyperBranch(nn.Module):
         p = self.predict(z_hat)
         return p["scales"], p["means"]
 
+    # -- Phase 8: the gain unit folded into the sigma index ------------------
+    def coder_params(self, z_hat: Tensor, *, quantise: bool = False,
+                     delta_beta: int | float | Tensor = 0,
+                     q_index: Tensor | None = None) -> dict:
+        """`predict()` plus the quality map: `{means, i_sigma, scales, rows, m, offset}`.
+
+        `m` is eq. (7)'s multiplier and is `None` when there is no gain unit, which is
+        the flag the three callers below branch on. Everything the entropy coder needs
+        comes out of here, so encoder and decoder cannot end up on different sigma rows
+        by taking different routes to them.
+
+        The order of operations is the point of this method. The gain offset is added to
+        the **unquantised** index and only the sum is rounded, matching the reference
+        software's `scaled_sigma_precision = scaler_precision + sigma_precision = 17`:
+        the sum is formed at the combined precision and reduced once. Rounding `Isigma`
+        first and adding afterwards would be self-consistent -- both ends would agree --
+        but it would throw away the fractional part of the offset for nothing.
+
+        With no gain unit this is `predict()` verbatim, including the `quantise` path,
+        so Phase 5's bitstreams are unaffected by this code existing.
+        """
+        if self.gain is None:
+            return {**self.predict(z_hat, quantise=quantise), "m": None, "offset": None}
+        p = self.predict(z_hat, quantise=False)
+        offset = self.gain.offset(delta_beta, q_index, quantise=quantise)
+        shifted = p["i_sigma"] + offset
+        out = {"means": p["means"], "m": self.gain.scale(offset), "offset": offset}
+        if not quantise:
+            return {**out, "i_sigma": shifted,
+                    "scales": self.sigma_index.sigma(shifted), "rows": None}
+        i_int = self.sigma_index.quantise(shifted)
+        return {**out, "i_sigma": i_int,
+                "scales": self.sigma_index.sigma(i_int.float()),
+                "rows": self.sigma_index.table_row(i_int)}
+
     # -- training -----------------------------------------------------------
     def forward(self, y: Tensor, gc: GaussianConditional, *,
-                noise: bool | None = None, ste: bool = True) -> dict:
+                noise: bool | None = None, ste: bool = True,
+                delta_beta: int | float | Tensor = 0,
+                q_index: Tensor | None = None) -> dict:
         z = self.h_a(y)
         z_hat, z_lik = self.entropy_bottleneck(z, noise=noise, ste=ste)
-        p = self.predict(z_hat)
-        y_hat, y_lik = gc(y, p["scales"], p["means"], noise=noise, ste=ste)
+        p = self.coder_params(z_hat, delta_beta=delta_beta, q_index=q_index)
+        if p["m"] is None:
+            y_hat, y_lik = gc(y, p["scales"], p["means"], noise=noise, ste=ste)
+        else:
+            # eqs. (7) and (8). `means=None` because the residual arrives already
+            # centred: handing `gc` the prediction as well would subtract it twice.
+            # The uniform-noise proxy therefore lands on `r'`, which is right -- `r'`
+            # is what the quantiser sees, so that is where the noise belongs.
+            m = p["m"]
+            r_hat, y_lik = gc(m * (y - p["means"]), p["scales"], None,
+                              noise=noise, ste=ste)
+            y_hat = r_hat / m + p["means"]
         return {"y_hat": y_hat, "y_lik": y_lik, "z_lik": z_lik,
                 "z": z, "z_hat": z_hat,
                 "scales": p["scales"], "means": p["means"],
@@ -423,28 +478,78 @@ class SplitHyperBranch(nn.Module):
                 # actually use, and so training can watch the index distribution --
                 # a scale decoder pinned at 0 or at 3967 is a dead branch, and it
                 # looks identical to a well-behaved one in the loss.
-                "i_sigma": p["i_sigma"]}
+                "i_sigma": p["i_sigma"],
+                # Phase 8: `None` on the ungained path, so a caller can tell "no gain
+                # unit" from "a gain unit sitting at 1.0" -- which matters, because the
+                # first is a model property and the second is a rate request.
+                "gain": p["m"], "gain_offset": p["offset"]}
 
     # -- real bitstream -----------------------------------------------------
     @torch.no_grad()
-    def compress(self, y: Tensor, gc: GaussianConditional) -> dict:
+    def precode(self, y: Tensor) -> dict:
+        """Everything about this picture that `D_beta` cannot change (Fig. 9).
+
+        The paper's own words: "The tensor before the gain unit is consistently
+        identical in each Δβ validation iteration, thus eliminating the necessity for
+        repeated encoding." That is a strong statement about the architecture, not
+        just an optimisation -- it says `z`, `mu` and `Isigma` are computed from the
+        *ungained* latent, and the gain touches only the residual that is coded on top
+        of them. So the whole side-information path runs once and the rate search
+        re-runs nothing but the arithmetic coder.
+
+        Concretely: bit-rate matching does a linear fit on two probes, then bisects,
+        then validates -- about ten encodes. Without this the analysis transform, the
+        hyper analysis, the factorised prior and the scale decoder would all run ten
+        times over. `z_hat` comes back too, because the cache has to hold the
+        *decoded* hyper latent: recomputing it from `z` would put the encoder on a
+        different `Isigma` than the decoder for every rate point at once.
+        """
         z = self.h_a(y)
         z_strings = self.entropy_bottleneck.compress(z)
         # From the *decoded* z_hat, never from z: the decoder has only the former,
         # and the two differ wherever the factorised prior's rounding disagrees.
         z_hat = self.entropy_bottleneck.decompress(
             z_strings, tuple(z.shape[-2:]), device=z.device)
-        p = self.predict(z_hat, quantise=True)
-        return {"y_strings": gc.compress(y, p["scales"], p["means"],
-                                         indexes=p["rows"]),
+        return {"y": y, "z_hat": z_hat,
                 "z_strings": z_strings, "z_shape": tuple(z.shape[-2:])}
 
     @torch.no_grad()
-    def decompress(self, part: dict, gc: GaussianConditional, device) -> dict:
+    def code_cached(self, pre: dict, gc: GaussianConditional, *,
+                    delta_beta: int | float | Tensor = 0,
+                    q_index: Tensor | None = None) -> dict:
+        """One rate point from a `precode` cache. The only per-Δβ work there is."""
+        p = self.coder_params(pre["z_hat"], quantise=True,
+                              delta_beta=delta_beta, q_index=q_index)
+        y = pre["y"]
+        values = y if p["m"] is None else p["m"] * (y - p["means"])
+        means = p["means"] if p["m"] is None else None
+        return {"y_strings": gc.compress(values, p["scales"], means,
+                                         indexes=p["rows"]),
+                "z_strings": pre["z_strings"], "z_shape": pre["z_shape"]}
+
+    @torch.no_grad()
+    def compress(self, y: Tensor, gc: GaussianConditional, *,
+                 delta_beta: int | float | Tensor = 0,
+                 q_index: Tensor | None = None) -> dict:
+        """Single-shot encode. Deliberately the two halves above and nothing else, so
+        a cached rate search and a plain encode cannot drift apart."""
+        return self.code_cached(self.precode(y), gc,
+                                delta_beta=delta_beta, q_index=q_index)
+
+    @torch.no_grad()
+    def decompress(self, part: dict, gc: GaussianConditional, device, *,
+                   delta_beta: int | float | Tensor = 0,
+                   q_index: Tensor | None = None) -> dict:
         z_hat = self.entropy_bottleneck.decompress(
             part["z_strings"], tuple(part["z_shape"]), device=device)
-        p = self.predict(z_hat, quantise=True)
-        return {"y_hat": gc.decompress(part["y_strings"], p["scales"], p["means"],
-                                       indexes=p["rows"]),
-                "z_hat": z_hat}
+        p = self.coder_params(z_hat, quantise=True,
+                              delta_beta=delta_beta, q_index=q_index)
+        if p["m"] is None:
+            y_hat = gc.decompress(part["y_strings"], p["scales"], p["means"],
+                                  indexes=p["rows"])
+        else:
+            r_hat = gc.decompress(part["y_strings"], p["scales"], None,
+                                  indexes=p["rows"])
+            y_hat = r_hat / p["m"] + p["means"]
+        return {"y_hat": y_hat, "z_hat": z_hat}
 

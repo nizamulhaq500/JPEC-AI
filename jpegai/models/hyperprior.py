@@ -300,6 +300,30 @@ class ScaleHyperprior(nn.Module):
                 ("h_a", self.h_a, False), ("h_s", self.h_s, True),
                 ("entropy_bottleneck", self.entropy_bottleneck, True)]
 
+    def training_parts(self) -> dict:
+        """`{part: [(label, module)]}` -- see `TwoBranchCodec.training_parts`.
+
+        Present on the single-branch model too, even though Table II's schedule is a
+        two-branch variable-rate thing and this model has no gain unit. Two reasons:
+        the freeze machinery in `jpegai.train.stages` then works for a Phase 3 model
+        as well, so stages I and II are runnable on it; and the partition invariant
+        becomes testable here, which is where it is cheapest to see broken.
+
+        `gain` is present and **empty** rather than absent. A stage that asks to train
+        the gain unit of a fixed-rate model must fail loudly on "nothing to train", not
+        on `KeyError`.
+        """
+        parts = {
+            "encoder": [("g_a", self.g_a)],
+            "decoder": [("g_s", self.g_s)],
+            "entropy": [("h_a", self.h_a), ("h_s", self.h_s),
+                        ("entropy_bottleneck", self.entropy_bottleneck)],
+            "gain": [],
+        }
+        if getattr(self, "h_scale", None) is not None:
+            parts["entropy"].append(("h_scale", self.h_scale))
+        return parts
+
     def gate_branches(self):
         """`[(suffix, entropy_bottleneck)]` for the Phase 3 round-trip gate.
 
@@ -487,16 +511,34 @@ def summarise(model, *, crop: int = 256) -> str:
     except Exception as exc:                                   # pragma: no cover
         macs = {"_error": str(exc)}
 
-    lines = [model.summary_title(),
-             f"  {'part':18} {'params':>11}  {'kMAC/pxl':>9}"]
+    # `params` means model size, so it counts every parameter, frozen or not. That is
+    # only worth spelling out because `count_parameters` defaults to trainable-only,
+    # and under Table II's stage IV -- which freezes all but the two gain vectors --
+    # the default turned this block into a freeze report claiming a 576 B codec. The
+    # `trainable` column appears only when a freeze is actually in effect, so every
+    # unfrozen run's output is unchanged.
+    n_all = count_parameters(model, trainable_only=False)
+    n_fit = count_parameters(model)
+    frozen = n_fit != n_all
+
+    head = f"  {'part':18} {'params':>11}  {'kMAC/pxl':>9}"
+    lines = [model.summary_title(), head + (f"  {'trainable':>11}" if frozen else "")]
     for name, mod, _ in parts:
         k = macs.get(name)
         cell = f"{k / 1e3:9.1f}" if k else " " * 9
-        lines.append(f"  {name:18} {count_parameters(mod):>11,}  {cell}")
+        row = f"  {name:18} {count_parameters(mod, trainable_only=False):>11,}  {cell}"
+        if frozen:
+            row += f"  {count_parameters(mod):>11,}"
+        lines.append(row)
 
     total_k = macs.get("TOTAL", 0.0) / 1e3
-    lines.append(f"  {'TOTAL':18} {count_parameters(model):>11,}  {total_k:9.1f}"
-                 f"   ({human_bytes(count_parameters(model) * 4)} fp32)")
+    if frozen:
+        lines.append(f"  {'TOTAL':18} {n_all:>11,}  {total_k:9.1f}  {n_fit:>11,}"
+                     f"   ({human_bytes(n_all * 4)} fp32, "
+                     f"{100 * n_fit / max(n_all, 1):.1f}% trainable)")
+    else:
+        lines.append(f"  {'TOTAL':18} {n_all:>11,}  {total_k:9.1f}"
+                     f"   ({human_bytes(n_all * 4)} fp32)")
     # The paper's kMAC/pxl figures are decoder-side, so this is the number to
     # compare against 8 / 28 / 215 -- not the total above.
     dec_k = sum(macs.get(n, 0.0) for n, _, is_dec in parts if is_dec) / 1e3

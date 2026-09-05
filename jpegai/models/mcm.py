@@ -82,6 +82,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from jpegai.models.entropy import GaussianConditional, quantize_ste
+from jpegai.models.gain import reject_gain
 from jpegai.models.hyper import HyperDecoder, SigmaIndex, SplitHyperBranch
 from jpegai.models.layers import activation
 
@@ -392,6 +393,21 @@ class MultiStageContextModel(nn.Module):
         return f"chs={self.chs}, stages={self.stages}, {sched}"
 
 
+def _no_gain(delta_beta, q_index) -> None:
+    """Refuse a quality map on the context-model branch rather than ignore one.
+
+    The three overrides below accept `delta_beta`/`q_index` so that this branch stays
+    signature-compatible with `SplitHyperBranch` -- callers should not have to know
+    which branch they hold. See `MCMBranch.__init__` for why it cannot be honoured.
+    """
+    reject_gain(delta_beta, q_index, "MCMBranch",
+                "The coset loop quantises internally, so the gain has to be applied "
+                "inside it and a spatial map coset-split alongside the latent; see "
+                "MCMBranch.__init__. Variable rate runs on `mcm: false` with "
+                "`gain: true`.")
+
+
+
 class MCMBranch(SplitHyperBranch):
     """Phase 5's branch with the context model in front of the mean. Drop-in.
 
@@ -414,7 +430,20 @@ class MCMBranch(SplitHyperBranch):
 
     def __init__(self, latent: int, hyper: int, *, sigma_index: SigmaIndex,
                  stages: int = 4, order=GROUP_ORDER, scale_layers: int = 2,
-                 activation_name: str = "relu", precision: int = 16):
+                 activation_name: str = "relu", precision: int = 16,
+                 gain: bool = False, scaler_precision: int = 10):
+        if gain:
+            raise NotImplementedError(
+                "the Phase 8 gain unit is not wired into the context model. It is not "
+                "a matter of threading an argument: `MultiStageContextModel."
+                "reconstruct` quantises each coset internally, so the gain has to be "
+                "applied *inside* that loop (encoder: round(m*(y - ctx)); decoder: "
+                "ctx + r_hat/m) and a spatial quality map has to be coset-split "
+                "alongside the latent. Doing it by halves would put the encoder and "
+                "decoder on different reconstructions, which is exactly the class of "
+                "bug this branch's `means=None` invariant exists to prevent. Variable "
+                "rate runs on the split-hyper line: `mcm: false` with `gain: true`."
+            )
         super().__init__(latent, hyper, sigma_index=sigma_index, fused=False,
                          scale_layers=scale_layers,
                          activation_name=activation_name, precision=precision)
@@ -450,7 +479,10 @@ class MCMBranch(SplitHyperBranch):
 
     # -- training -----------------------------------------------------------
     def forward(self, y: Tensor, gc: GaussianConditional, *,
-                noise: bool | None = None, ste: bool = True) -> dict:
+                noise: bool | None = None, ste: bool = True,
+                delta_beta: int | float | Tensor = 0,
+                q_index: Tensor | None = None) -> dict:
+        _no_gain(delta_beta, q_index)
         z = self.h_a(y)
         z_hat, z_lik = self.entropy_bottleneck(z, noise=noise, ste=ste)
         p = self.predict(z_hat)
@@ -472,7 +504,29 @@ class MCMBranch(SplitHyperBranch):
 
     # -- real bitstream -----------------------------------------------------
     @torch.no_grad()
-    def compress(self, y: Tensor, gc: GaussianConditional) -> dict:
+    def code_cached(self, pre: dict, gc: GaussianConditional, *,
+                    delta_beta: int | float | Tensor = 0,
+                    q_index: Tensor | None = None) -> dict:
+        """Refused, not inherited.
+
+        `SplitHyperBranch.code_cached` codes `y` against `means` from the scale
+        decoder alone, which for this branch is only the *hyper* part of the context.
+        Inheriting it would silently drop the context model -- the bitstream would
+        decode to a different picture, and the rate would look plausible. Since Fig.
+        9's cache exists to serve the Δβ search, and this branch has no Δβ, there is
+        nothing to inherit it for.
+        """
+        raise NotImplementedError(
+            "MCMBranch has no cached-encode path: the coset loop is part of the "
+            "encode, so there is no 'everything before the gain unit' to cache. Rate "
+            "search runs on `mcm: false` with `gain: true`; see MCMBranch.__init__."
+        )
+
+    @torch.no_grad()
+    def compress(self, y: Tensor, gc: GaussianConditional, *,
+                 delta_beta: int | float | Tensor = 0,
+                 q_index: Tensor | None = None) -> dict:
+        _no_gain(delta_beta, q_index)
         z = self.h_a(y)
         z_strings = self.entropy_bottleneck.compress(z)
         # From the decoded z_hat, never from z -- the decoder has only the former.
@@ -488,7 +542,10 @@ class MCMBranch(SplitHyperBranch):
                 "z_strings": z_strings, "z_shape": tuple(z.shape[-2:])}
 
     @torch.no_grad()
-    def decompress(self, part: dict, gc: GaussianConditional, device) -> dict:
+    def decompress(self, part: dict, gc: GaussianConditional, device, *,
+                   delta_beta: int | float | Tensor = 0,
+                   q_index: Tensor | None = None) -> dict:
+        _no_gain(delta_beta, q_index)
         z_hat = self.entropy_bottleneck.decompress(
             part["z_strings"], tuple(part["z_shape"]), device=device)
         p = self.predict(z_hat, quantise=True)

@@ -89,6 +89,81 @@ def _boot():
 
 _boot()
 
+# ============== CELL 1b — limits, and prove a file can get out ================
+# Runs before anything expensive, because two containers have now been lost and
+# both times the archives could not be reached from the file browser. Three
+# questions, measured rather than assumed:
+#
+#   1. How much RAM does this container actually get? Each training process holds
+#      its own copy of the crop pack unless cell 3 returns the mmap -- 1.17 GiB
+#      per process, 8.2 GiB across seven jobs, all of it the same bytes. Cell 3
+#      now returns the map; this prints both numbers so the fix is visible.
+#   2. How much disk? loop.py:572-573 writes best.pt and latest.pt on every
+#      validation as well as final.pt, so the checkpoint bill is 3x the obvious
+#      one -- ~5 GiB across eleven rate points, not 1.7.
+#   3. Can a file reach the Mac AT ALL? Click the button below. If a 1 KiB file
+#      cannot get down, nothing else in this notebook matters, and the place to
+#      discover that is here rather than four hours in.
+
+
+def _preflight():
+    import shutil
+
+    # cgroup v2 then v1. An unlimited cgroup reads "max", which fails int() and
+    # falls through to MemTotal.
+    cap = None
+    for f in ("/sys/fs/cgroup/memory.max",
+              "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            v = int(pathlib.Path(f).read_text().split()[0])
+        except (OSError, ValueError):
+            continue
+        if 0 < v < 2**50:
+            cap = v
+            break
+    host = next((int(x.split()[1]) * 1024
+                 for x in pathlib.Path("/proc/meminfo").read_text().splitlines()
+                 if x.startswith("MemTotal:")), 0)
+    ram = min(x for x in (cap, host) if x)
+    print(f"RAM      {host / 2**30:6.1f} GiB host, cgroup cap "
+          f"{f'{cap / 2**30:.1f} GiB' if cap else 'none'}"
+          f"  -> {ram / 2**30:.1f} GiB usable, {os.cpu_count()} vCPU")
+
+    pack = 6400 * 3 * 256 * 256          # the crop tensor, uint8
+    proc = 2.0 * 2**30                   # torch + CUDA context + cuDNN, per process
+    for n in (7, 4):
+        shared, private = pack + n * proc, n * (pack + proc)
+        print(f"  {n} jobs {shared / 2**30:6.1f} GiB shared (mmap, what cell 3 does"
+              f" now)   {private / 2**30:5.1f} GiB if each copies"
+              f"   {'OK' if shared < 0.8 * ram else 'TIGHT -- run tier 1 only'}")
+
+    du = shutil.disk_usage(ROOT if ROOT.exists() else "/")
+    need = (7.6 * 2**30                      # DIV2K train+valid; cell 2 deletes the zips
+            + 1.5 * 2**30                    # 6400 crop PNGs
+            + pack                           # _pack_256.npy
+            + 3 * (6 * 177 + 5 * 114) * 2**20    # final + latest + best, 11 points
+            + 1.3 * 2**30)                   # the archives cell 8 writes
+    print(f"disk     {du.free / 2**30:6.1f} GiB free of {du.total / 2**30:.1f}"
+          f"   campaign needs ~{need / 2**30:.1f} GiB"
+          f"   {'OK' if need < 0.85 * du.free else 'WILL NOT FIT'}")
+
+    # The thing both losses actually turned on: ROOT is not what the sidebar shows.
+    probe = pathlib.Path.cwd() / "EXFIL_TEST.txt"
+    probe.write_text("If this reached the Mac, the download path works.\n")
+    print(f"\nwrote {probe}\n  cwd is what the file browser lists. {ROOT} is where"
+          f" every archive gets written\n  and it has never appeared there -- which"
+          f" is why cells 7 and 8 now stage into cwd.")
+    try:
+        import marimo as mo
+        return mo.download(probe.read_bytes(), filename=probe.name)
+    except Exception as exc:
+        print(f"  no button ({exc.__class__.__name__}) -- open the file-tree icon in"
+              f" the left sidebar\n  and look for {probe.name}. If it is not there,"
+              f" STOP: fix the route before training.")
+
+
+_preflight()
+
 # ===================== CELL 2 — data (deterministic crops) =====================
 # prepare_crops.py seeds its RNG with crc32(filename) and walks sorted() order, so
 # the 6,400 crops regenerated here are byte-identical to the ones the Mac ladders
@@ -232,7 +307,7 @@ _INRAM_SRC = '''"""In-RAM crop dataset. Import for its side effect: it monkeypat
 `jpegai.train.dataset.build_loaders` to serve crops from one uint8 tensor.
 """
 from __future__ import annotations
-import numpy as np, torch
+import numpy as np, torch, warnings
 from torch.utils.data import Dataset, DataLoader
 from jpegai.config import PROJECT_ROOT
 from jpegai.train import dataset as _ds
@@ -244,8 +319,14 @@ def _pack(files, crop=256):
     if CACHE.exists():
         a = np.load(CACHE, mmap_mode="r")
         if a.shape == (len(files), 3, crop, crop):
-            print(f"in-RAM crops: {CACHE.name} {a.shape} (cached)", flush=True)
-            return np.ascontiguousarray(a)
+            print(f"in-RAM crops: {CACHE.name} {a.shape} (mmap)", flush=True)
+            # Return the map, NOT a copy. np.save writes C order, so the mmap is
+            # already contiguous and ascontiguousarray materialised a private
+            # 1.17 GiB in every process -- 8.2 GiB across seven concurrent jobs,
+            # all of it the same bytes off the same file. Through the page cache
+            # it is 1.17 GiB once, shared. Nothing writes to it: __getitem__ does
+            # .float(), which copies, before div_ touches anything.
+            return a
     out = np.empty((len(files), 3, crop, crop), dtype=np.uint8)
     for i, f in enumerate(files):
         out[i] = _ds._load_rgb(f).transpose(2, 0, 1)
@@ -264,7 +345,17 @@ class InRamCrops(Dataset):
         files = _ds.list_images(roots)
         if not files:
             raise FileNotFoundError(f"no crops under {roots}")
-        self.data = torch.from_numpy(_pack(files, crop))
+        a = _pack(files, crop)
+        # from_numpy warns on a read-only mmap and hands back a tensor it says is
+        # unsafe to write. Nothing here writes to it, so the warning is noise in
+        # seven job logs -- but if some torch version turns that into an error,
+        # fall back to a private copy rather than failing at step 0.
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                self.data = torch.from_numpy(a)
+        except (ValueError, TypeError):
+            self.data = torch.from_numpy(np.array(a))
         self.augment = bool(augment)
 
     def __len__(self):
@@ -335,12 +426,30 @@ _gate()
 
 # ================= CELL 5 — config variants for the weight sweep ===============
 # distortion_weights is OURS, not normative (report 26.3), and it is the cheapest
-# untested hypothesis for the luma deficit -- Kodak now puts it at psnr_y +7.2%
-# against psnr_u -60.0%. Two variants around our 6:1:1.
+# untested hypothesis for the luma deficit -- Kodak puts psnr_y at +6.4% against
+# psnr_u at -60.5%.
+#
+# THE RANGE IS WIDER THAN IT WAS, and that is the whole point of running this again.
+# The first sweep tried 4:1:1 / 6:1:1 / 8:1:1 and came back 32.55 / 32.58 / 32.60 dB
+# overall, Y 32.85 / 32.96 / 33.02, U 40.44 / 40.36 / 40.29 -- monotone in the right
+# direction, ~1% of rate end to end, and therefore a null result. It was null because
+# the range was too narrow to be informative, not because the knob does nothing:
+# chroma is reconstructing ~7 dB ABOVE luma, so a 2x change in the luma weight moves
+# an allocation that is already lopsided by ~7 dB nowhere near enough to see. The
+# informative span is 1:1:1 (no luma preference at all) to 24:1:1 (four times ours),
+# which brackets our 6:1:1 by a factor of 6 in each direction instead of 1.5.
+#
+# 6:1:1 stays in as the control, and it is also the exact recipe of
+# ladder_p6/beta0.012 -- so it doubles as the CUDA-vs-MPS bridge, for free, exactly
+# as sweep_w6 did last time (0.9571 bpp / 32.58 dB on CUDA against the Mac's
+# 0.9628 / 32.59, i.e. agreement to ~0.01 dB after rate normalisation).
+#
+# Same three runs, same 50,000 steps, same 150,000 GPU-steps as before. The only
+# difference is that this time the answer can be something other than "no effect".
 
 
 def _write_variants():
-    for tag, wy in [("w4", 4.0), ("w8", 8.0)]:
+    for tag, wy in [("w1", 1.0), ("w24", 24.0)]:
         (ROOT / "jpegai" / "config" / f"full_{tag}.yaml").write_text(
             f"# Distortion-weight sweep, {wy:g}:1:1. OURS -- see report 26.3, "
             f"27.1 item 5.\n"
@@ -348,36 +457,49 @@ def _write_variants():
             f"name: full_{tag}\n"
             f"train:\n"
             f"  distortion_weights: {{y: {wy:g}, u: 1.0, v: 1.0}}\n")
-        print(f"wrote full_{tag}.yaml")
+        print(f"wrote full_{tag}.yaml   ({wy:g}:1:1)")
 
 
 _write_variants()
 
 # ========================= CELL 6 — launch, detached ==========================
-# Four processes on one card in tier 1. The model is 12.6 M params at batch 8, so
-# VRAM is a few GiB each out of 95 and the card is nowhere near full -- concurrency
-# within a tier is close to free, and 4 vCPUs is the real ceiling.
+# LAUNCH EVERYTHING AT ONCE. The first run of this notebook went tier-by-tier, four
+# jobs at a time, on the theory that 4 vCPUs is the ceiling. The monitor board then
+# showed the card at 66% utilisation and 1,543 MiB of 95 GiB in use -- so the ceiling
+# was neither VRAM (each job is ~400 MiB; the card would hold two hundred of them) nor
+# the GPU itself. Holding runs back in a second tier bought nothing and cost the
+# wall clock of a whole extra pass.
 #
-# TIERED, because the hours are limited. Tiers are sequential, jobs within a tier run
-# concurrently, and tier 1 launches the LONGEST job first so the three 50k runs
-# finish inside its shadow at no extra wall clock.
+# The arithmetic that matters, all of it measured on this card last time: one job
+# alone runs at 15.88 it/s, four concurrent jobs aggregate to 60.7 it/s (15.2 each),
+# so concurrency inside a tier was already nearly free. Total work here is 700,000
+# steps. Spread over 7 lanes that is ~2 h of card time -- but `ladder_p6_long` is a
+# single indivisible 200,000-step job, so the critical path is 200,000 / ~15 =
+# **~3.7 h whatever else runs beside it**. Every other run therefore belongs in
+# p6_long's shadow, which is what TIER = 0 does.
 #
-#   TIER 1   ladder_p6_long (200k steps) + the 3-way weight sweep (50k each)
-#   TIER 2   ladder_p5_cont (the MCM control, 50k) + ladder_p3f (5 betas x 50k)
+#   ladder_p6_long   200k   the step budget: 4x the steps at one beta. The biggest
+#                           single finding last time (+0.55 dB at matched rate).
+#   ladder_p3f       250k   5 betas x 50k. Single-branch mean-scale, and the only run
+#                           here that carries its own Kodak BD-rate.
+#   ladder_p5_cont    50k   the MCM control: same seed, same steps, no MCM.
+#   sweep_w1/6/24    150k   the luma-weight sweep, on a range wide enough to answer
+#                           (cell 5). w6 doubles as the CUDA-vs-MPS bridge.
+#   (cell 9)          50k   beta 0.0002, which takes the Kodak overlap to 8/11.
 #
-# Tier 1 is exactly four jobs for exactly four vCPUs. Tier 2 is the expensive one:
-# 300,000 steps against tier 1's 350,000, but with far less concurrency to hide it.
+# 7 jobs on 4 vCPUs is oversubscribed, and whether that helps or hurts is a question
+# about kernel-launch overhead that is cheaper to MEASURE than to predict: cell 7
+# prints aggregate it/s, so compare it against 60.7 within the first two minutes. If
+# it came out lower, kill `sweep_w1` and `sweep_w24` (the least valuable pair) and the
+# rest speeds back up. Set TIER = 1 or 2 to fall back to the old sequential scheme.
 #
 # NOTHING is at reduced steps. The sweep runs at the same 50,000 as every Mac ladder,
-# so its ranking is a result rather than a hint -- and sweep_w6 comes out an exact
-# recipe match for ladder_p6/beta0.012, which makes it the CUDA-vs-MPS bridge for
-# free. That is why there is no separate `ladder_hwbridge` any more.
+# so its ranking is a result rather than a hint.
 #
-# Set TIER and re-run this cell for each tier you can afford. Relaunching is safe:
-# a job whose log already exists is skipped, which is what keeps marimo's automatic
-# re-execution from starting a second copy of a 200,000-step run.
+# Relaunching is safe: a job whose log already exists is skipped, which is what keeps
+# marimo's automatic re-execution from starting a second copy of a 200,000-step run.
 
-TIER = 1
+TIER = 0      # 0 = everything concurrently (recommended); 1 or 2 = that tier only
 
 # --iterations is on EVERY job on purpose: the config defaults are 600,000 (full) and
 # 400,000 (tierA), so a missing flag is a twelvefold overrun rather than a typo.
@@ -387,9 +509,14 @@ COMMON = ("--batch 8 --workers 0 --device cuda --colour-space ycbcr "
 SEED = "--warm-start-from checkpoints/ladder_p5"
 
 TIERS = {
-    # ---- TIER 1: the budget probe and the weight sweep, all at full steps ------
-    # Longest job first. p6_long is the only thing here that is not 50,000 steps, and
-    # it is the wall clock for the whole tier; the sweep rides along inside it.
+    # The two groups below are no longer a schedule -- TIER = 0 launches all of them
+    # together. They are kept as GROUPS because the split still records something
+    # true: group 1 is the runs that share a warm start and a beta, group 2 is the
+    # two that stand alone. Set TIER = 1 or 2 to get the old sequential behaviour.
+    #
+    # ---- 1: the budget probe and the weight sweep, all at full steps -----------
+    # Longest job first, so p6_long's 200,000 steps start before anything else
+    # competes for the card.
     1: {
         # 26.1's confound in its cheapest decisive form: 4x the steps at ONE beta,
         # same architecture, and the same seed weights ladder_p6/beta0.012 started
@@ -399,21 +526,22 @@ TIERS = {
                           f"--betas 0.012 --iterations 200000 {SEED}",
 
         # distortion_weights is OURS, not normative (report 26.3), and the cheapest
-        # untested hypothesis for the luma deficit -- Kodak has psnr_y at +7.2% while
-        # psnr_u is -60.0%. Three runs sharing config seed 1234 and differing in
+        # untested hypothesis for the luma deficit -- Kodak has psnr_y at +6.4% while
+        # psnr_u is -60.5%. Three runs sharing config seed 1234 and differing in
         # exactly one key, so the ranking is clean with or without the warm start.
+        # The span is 1:1:1 to 24:1:1 this time, not 4 to 8: see cell 5 for why the
+        # narrow version could only ever come back null.
         # sweep_w6 is the 6:1:1 control AND, with the seed present, a step-for-step
         # rerun of ladder_p6/beta0.012 on CUDA -- i.e. the hardware bridge.
-        "sweep_w6": f"--model twobranch-mcm --tier full    --name sweep_w6 "
+        "sweep_w6": f"--model twobranch-mcm --tier full     --name sweep_w6 "
                     f"--betas 0.012 --iterations 50000 {SEED}",
-        "sweep_w4": f"--model twobranch-mcm --tier full_w4 --name sweep_w4 "
+        "sweep_w1": f"--model twobranch-mcm --tier full_w1  --name sweep_w1 "
                     f"--betas 0.012 --iterations 50000 {SEED}",
-        "sweep_w8": f"--model twobranch-mcm --tier full_w8 --name sweep_w8 "
-                    f"--betas 0.012 --iterations 50000 {SEED}",
+        "sweep_w24": f"--model twobranch-mcm --tier full_w24 --name sweep_w24 "
+                     f"--betas 0.012 --iterations 50000 {SEED}",
     },
-    # ---- TIER 2: the MCM attribution control, and phase 3 at full width --------
-    # ladder_p5_cont is the sharpest single result available for 50,000 steps, and it
-    # is here rather than tier 1 only because tier 1 already has one job per vCPU.
+    # ---- 2: the MCM attribution control, and phase 3 at full width -------------
+    # ladder_p5_cont is the sharpest single result available for 50,000 steps.
     # ladder_p6/beta0.012 IS ladder_p5/beta0.012 plus 50,000 steps plus the MCM. Run
     # the same 50,000 steps from the same weights WITHOUT the MCM and the difference
     # is the MCM alone -- which turns phase 6's +0.60 dB from an upper bound into an
@@ -425,7 +553,8 @@ TIERS = {
     # -- not the rate point -- is the unit of comparison. No SEED: mean-scale cannot
     # usefully load twobranch weights, and #0/#1 started cold too. 250,000 steps
     # total, so it is the expensive job here, and the only one that carries its own
-    # BD-rate.
+    # BD-rate. Last time it also came back with `exact False` at beta 0.03 -- watch
+    # that row on cell 7's board rather than discovering it at bench time.
     2: {
         "ladder_p5_cont": f"--model twobranch-split --tier full --name ladder_p5_cont "
                           f"--betas 0.012 --iterations 50000 {SEED}",
@@ -439,7 +568,11 @@ TIERS = {
 # number nothing can be compared against.
 REQUIRE_SEED = {"ladder_p6_long", "ladder_p5_cont"}
 
-JOBS = {k: v for t in sorted(TIERS) if t <= TIER for k, v in TIERS[t].items()}
+# Every job, in tier order, which is also longest-first -- so the 200,000-step
+# critical path starts before anything queues behind it. TIER = 0 launches all of
+# them; a nonzero TIER keeps the old sequential behaviour for when the card is shared.
+JOBS = {k: v for t in sorted(TIERS) for k, v in TIERS[t].items()}
+
 
 def _launch():
     logs = ROOT / "logs"
@@ -461,9 +594,19 @@ def _launch():
         "from jpegai.train.runladder import main\n"
         "sys.exit(main(sys.argv[1:]))\n")
 
+    want = JOBS if TIER == 0 else TIERS[TIER]
     have_seed = (ROOT / "checkpoints/ladder_p5/beta0.012/final.pt").exists()
-    print(f"tier {TIER}: launching {len(TIERS[TIER])}, monitoring {len(JOBS)}, "
-          f"seed {'present' if have_seed else 'MISSING (see cell 2b)'}\n")
+
+    def _steps(a):
+        """GPU-steps a job will actually run: --iterations is PER rate point."""
+        n = (len(a.split("--betas")[1].split()[0].split(","))
+             if "--betas" in a else 5)      # no --betas = runladder's default grid
+        return int(a.split("--iterations")[1].split()[0]) * n
+
+    total = sum(_steps(a) for a in want.values())
+    print(f"{'all tiers' if TIER == 0 else f'tier {TIER}'}: launching {len(want)} job(s), "
+          f"{total:,} GPU-steps, seed "
+          f"{'present' if have_seed else 'MISSING (see cell 2b)'}\n")
 
     # 4 vCPUs against 4 torch processes that each default to 4 OMP threads is 16
     # threads on 4 cores. Pinning to 1 is worth more here than anything else.
@@ -475,7 +618,7 @@ def _launch():
     # start took. Costs nothing at one line per 200 steps.
     env = "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1"
 
-    for name, args in TIERS[TIER].items():
+    for name, args in want.items():
         if name in REQUIRE_SEED and not have_seed:
             print(f"{name:16s} SKIPPED -- needs "
                   f"checkpoints/ladder_p5/beta0.012/final.pt. Cold it would\n"
@@ -498,12 +641,25 @@ _launch()
 
 # ============================ CELL 7 — monitor ================================
 # Re-run this cell whenever you want a status board. Safe to run any time; it only
-# reads. json/time are imported inside the function so they are not notebook-wide
+# reads. json/re/time are imported inside the function so they are not notebook-wide
 # definitions that a later cell would collide with.
+#
+# THIS BOARD IS THE BACKUP. A rented container gets reset, and when one did, eleven
+# checkpoints and ~150 KB of logs went with it -- every number that survived did so
+# because it had been pasted into a chat window. So this cell prints each rate point
+# in FULL rather than a headline, and the habit that costs nothing is to paste the
+# output somewhere durable each time you poll. Downloading cell 8's numbers archive
+# is the belt; this is the braces, and it needs no download at all.
+#
+# It also prints aggregate it/s. The card did 60.7 it/s across four concurrent jobs
+# last time at 66% utilisation, so with seven jobs the question is whether
+# oversubscribing 4 vCPUs helps or hurts -- read the number off this board in the
+# first two minutes rather than guessing. Lower than ~60 means kill sweep_w1 and
+# sweep_w24.
 
 
 def _status():
-    import json, time
+    import json, re, time
 
     print(time.strftime("%H:%M:%S"))
     sh("nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,"
@@ -511,10 +667,13 @@ def _status():
     # Liveness, separately from the logs. An empty log is ambiguous on its own --
     # a job still in startup and a job that died before its first flush look the
     # same in the file -- and this is what tells them apart.
-    sh("pgrep -af cloud_run.py | grep -o -- '--name [A-Za-z0-9_]*' | sort | uniq -c"
-       " || echo '  (no cloud_run.py processes)'", check=False)
+    sh("pgrep -af 'cloud_run.py|cloud_point.py' | grep -o -- '--name [A-Za-z0-9_./]*'"
+       " | sort | uniq -c || echo '  (no training processes)'", check=False)
 
-    # Iterate the LOGS, not JOBS: cell 9's hole point is launched outside the tier
+    rate_total = 0.0
+    live = 0
+
+    # Iterate the LOGS, not JOBS: cell 9's low point is launched outside the tier
     # dictionary, and keying off JOBS silently omitted it. Anything that writes
     # logs/cloud_*.log shows up here now, whoever launched it.
     for log in sorted((ROOT / "logs").glob("cloud_*.log")):
@@ -522,10 +681,17 @@ def _status():
         st = log.stat()
         lines = [ln for ln in log.read_text(errors="replace").splitlines() if ln.strip()]
         prog = [ln for ln in lines if "/" in ln and "it/s" in ln]
-        print(f"\n=== {name}   {st.st_size:,} B, last write "
-              f"{(time.time() - st.st_mtime) / 60:.1f} min ago")
+        idle = (time.time() - st.st_mtime) / 60
+        print(f"\n=== {name}   {st.st_size:,} B, last write {idle:.1f} min ago")
         if prog:
             print("   " + prog[-1].strip())
+            # Only a LIVE log contributes to the aggregate. A finished job's last
+            # line still carries an it/s, and counting it would inflate the total
+            # with throughput the card is no longer producing.
+            m = re.search(r"([\d.]+)\s*it/s", prog[-1])
+            if m and idle < 3.0:
+                rate_total += float(m.group(1))
+                live += 1
         elif lines:
             print("   " + lines[-1][:150])
         else:
@@ -541,17 +707,95 @@ def _status():
                   " buffer. Check pgrep above:\n       named there = alive and"
                   " starting up, absent = it died, so read the log in full.")
 
+        # The full row, not a headline. These lines are the durable record if the
+        # container dies, so they carry the columns a table would need: the real
+        # bitstream's bpp beside the estimate, the escape fractions, and the worst
+        # per-stream disagreement. See runladder._print_summary for what each gate
+        # means; this is the same data before the warnings are applied to it.
         j = ROOT / "checkpoints" / name / "ladder.json"
         if j.exists():
-            for pt in json.loads(j.read_text()).get("points", []):
-                print(f"   beta {pt['beta']:<7g} step {pt.get('step', 0):>7,} "
-                      f"bpp {pt.get('valid_bpp') or float('nan'):.4f} "
-                      f"psnr {pt.get('valid_psnr') or float('nan'):.2f} "
-                      f"gap_q {pt.get('gap_q_pct') or float('nan'):+.2f}% "
-                      f"exact {pt.get('y_exact')}")
+            pts = json.loads(j.read_text()).get("points", [])
+            if pts:
+                print(f"   {'beta':>7} {'step':>7} {'est bpp':>8} {'act bpp':>8} "
+                      f"{'psnr':>6} {'gap_q':>7} {'oor y':>6} {'oor z':>6} "
+                      f"{'exact':>5}  worst")
+            for pt in pts:
+                def g(k, spec):
+                    v = pt.get(k)
+                    return format(v, spec) if isinstance(v, (int, float)) else "--"
+                w = pt.get("worst_stream")
+                worst = (f"{w} {pt['worst_stream_b']:+.0f} B"
+                         if w and isinstance(pt.get("worst_stream_b"), float) else "--")
+                print(f"   {pt['beta']:>7g} {pt.get('step', 0):>7,} "
+                      f"{g('valid_bpp', '8.4f')} {g('act_bpp', '8.4f')} "
+                      f"{g('valid_psnr', '6.2f')} {g('gap_q_pct', '+7.2f')} "
+                      f"{g('y_oor_pct', '6.3f')} {g('z_oor_pct', '6.3f')} "
+                      f"{str(pt.get('y_exact', '--')):>5}  {worst}")
+        else:
+            # A single point launched through loop.main (cell 9) never writes a
+            # ladder.json -- its numbers exist only in this log, so surface them here
+            # rather than leaving the one run with no durable row.
+            for ln in [x for x in lines if "bpp" in x.lower()][-3:]:
+                print("   " + ln.strip()[:160])
+
+    print(f"\naggregate {rate_total:>6.1f} it/s across {live} live job(s)"
+          f"   (4-job baseline was 60.7)")
+    if live > 4 and rate_total and rate_total < 55:
+        print("  Oversubscription is costing you. Kill the two least valuable runs")
+        print("  (trailing space in the pattern: `pkill -f` is a regex over the whole")
+        print("  cmdline, and `sweep_w1` without it also matches nothing useful):")
+        print("    sh(\"pkill -f 'name sweep_w1 '\", check=False)")
+        print("    sh(\"pkill -f 'name sweep_w24 '\", check=False)")
+    print("PASTE THIS BOARD SOMEWHERE DURABLE, then click the button below.")
+
+
+def _bank():
+    """Rebuild the numbers archive and return it as a download button.
+
+    Cell 8 did this once, at the end, and the container was reclaimed before
+    anyone pressed anything -- twice, 4.3 h of GPU each time. So it happens on
+    every poll now instead. Three of the five results here (step budget, MCM
+    attribution, weight sweep) are single-beta DIV2K comparisons whose every
+    number lives in a ladder.json, which is why this archive is ~100 KiB and
+    still carries them all.
+
+    Nothing on the box is durable. /root/JPEC-AI is gone after a reset and so is
+    the notebook's own directory -- /marimo looked persistent because a seed
+    survived there once, but that was a kernel restart, not a container reset.
+    molab keeps the notebook source and nothing else. The Mac is the only storage.
+    """
+    import tarfile
+
+    out = ROOT / "cloud_numbers.tar.gz"
+    n = 0
+    with tarfile.open(out, "w:gz") as tf:
+        for d, pat in [(ROOT / "checkpoints", "*/ladder.json"),
+                       (ROOT / "logs", "cloud_*.log"),
+                       (ROOT / "results", "*.json")]:
+            for p in sorted(d.glob(pat)) if d.is_dir() else []:
+                arc = (f"cloud_results/{p.parent.name}_ladder.json"
+                       if p.name == "ladder.json" else f"cloud_results/{p.name}")
+                tf.add(p, arcname=arc)
+                n += 1
+    print(f"banked {out.name}  {out.stat().st_size / 2**10:.0f} KiB, {n} file(s)")
+
+    # Staged into the notebook's directory too: a download button that fails leaves
+    # nothing behind, and the file browser is the only other way out of here.
+    try:
+        import shutil
+        shutil.copy2(out, pathlib.Path.cwd() / out.name)
+    except Exception as exc:
+        print(f"  stage failed: {exc}")
+    try:
+        import marimo as mo
+        return mo.download(out.read_bytes(), filename=out.name)
+    except Exception as exc:
+        print(f"  no button ({exc.__class__.__name__}) -- take it from the file "
+              f"browser at {pathlib.Path.cwd() / out.name}")
 
 
 _status()
+_bank()
 
 # ===================== CELL 8 — package results for download ==================
 # Run when a job finishes. Assume this filesystem is NOT durable: pull the files
@@ -565,25 +809,30 @@ _status()
 #     blocked without them. 100-150 MB each, so pulling them through a browser is
 #     a decision rather than a formality. Stop once you have what you need.
 #
-# This walks the checkpoint tree rather than JOBS on purpose. Cell 9's hole point
-# writes to checkpoints/ladder_p6/beta0.005, which is not a JOBS key, and it is the
-# most valuable file here -- keying off JOBS left it behind without saying so.
+# This walks the checkpoint tree rather than JOBS on purpose. Cell 9's low point
+# writes to checkpoints/ladder_p6/beta0.0002, which is not a JOBS key, and it is the
+# most valuable file here -- keying off JOBS left it behind without saying so, and
+# that is precisely how a 200,000-step run's weights went missing once already.
 
 
 def _package():
     import tarfile
 
-    # The seed tree came FROM the Mac, so sending it back is a 200 MB round trip
+    # The seed tree came FROM the Mac, so sending it back is a 100 MB round trip
     # for files already there. Matched on path COMPONENTS, not string prefixes:
     # "ladder_p5_cont".startswith("ladder_p5") is true and would drop a real run.
-    seeded = [("ladder_p5",), ("ladder_p6", "beta0.002")]
-    # Ranked by what cannot be done without it. #1 removes PCHIP's interpolation
-    # across JPEG's densest Kodak region from the headline BD-rate; #2 settles
-    # single-branch vs two-branch; #3 puts the step-budget result on Kodak. The
-    # sweeps come last because their conclusion is already in ladder.json -- three
-    # near-identical rate points do not need re-benching to be reported.
-    rank = [("ladder_p6", "beta0.005"), ("ladder_p3f",), ("ladder_p6_long",),
-            ("ladder_p5_cont",), ("sweep_w6",), ("sweep_w8",), ("sweep_w4",)]
+    # _probe is cell 4's 200-step throughput probe. It is not a seed, it is junk --
+    # but it writes a full-tier final.pt with optimiser state, so it packaged as a
+    # 161.7 MiB "cloud_w8_other.tar.gz" that took a round trip to identify.
+    seeded = [("ladder_p5",), ("ladder_p6", "beta0.0005"), ("_probe",)]
+    # Ranked by what cannot be done without it. #1 takes the Kodak overlap from 7/11
+    # to 8/11 and does it at the end of the curve where the codec is 21% ahead; #2
+    # settles single-branch vs two-branch on Kodak; #3 puts the step-budget result
+    # there too. The sweeps come last because their conclusion is already in
+    # ladder.json -- three rate points at one beta do not need re-benching to be
+    # reported, and cell 7's board has already captured the numbers.
+    rank = [("ladder_p6", "beta0.0002"), ("ladder_p3f",), ("ladder_p6_long",),
+            ("ladder_p5_cont",), ("sweep_w6",), ("sweep_w24",), ("sweep_w1",)]
     # ladder.json files the MAC owns. Never ship these back: checkpoints/ladder_p6/
     # ladder.json on the Mac is the authoritative seven-point ladder, and an
     # extract-in-place of a box copy would quietly overwrite it.
@@ -609,6 +858,7 @@ def _package():
         groups.setdefault(i, []).append(f)
 
     print()
+    written = []
     for i in sorted(groups):
         label = "_".join(rank[i]) if i < len(rank) else "other"
         out = ROOT / f"cloud_w{i + 1}_{label.replace('.', '')}.tar.gz"
@@ -623,62 +873,117 @@ def _package():
                 tf.add(j, arcname=str(j.relative_to(ROOT)))
         print(f"{out.name:<38} {out.stat().st_size / 2**20:>6.1f} MiB"
               f"   {len(groups[i])} checkpoint(s)")
+        written.append(out)
 
+    # Staged where the file browser can actually see them: the notebook's own
+    # directory, not ROOT. Cell 1 clones to /root/JPEC-AI and the sidebar has never
+    # shown it, which is the same asymmetry that made cell 2b hunt six directories
+    # for the upload. Hard-linked when the two share a filesystem so it costs no
+    # disk, copied when they do not. Top three only -- w4..w7 are 559 MiB of
+    # checkpoints whose conclusions are already in ladder.json.
+    stage = pathlib.Path.cwd()
+    if stage != ROOT:
+        for out in written[:3]:
+            tgt = stage / out.name
+            if tgt.exists() and tgt.stat().st_size == out.stat().st_size:
+                continue
+            try:
+                tgt.unlink(missing_ok=True)
+                os.link(out, tgt)
+            except OSError:
+                import shutil
+                shutil.copy2(out, tgt)
+        print(f"\nstaged the first {min(3, len(written))} in {stage} -- "
+              f"they show up in the file browser from there")
+
+    # Derived from `written`, never hardcoded: this line named beta0005 for a while
+    # after cell 9 moved to beta0.0002, i.e. it told you to extract a file that did
+    # not exist. An instruction that can drift out of step with the thing it
+    # describes should not be a literal.
+    print("\nPULL EACH ARCHIVE AS ITS RUN FINISHES, not after all seven. Both losses")
+    print("so far happened in the gap between the last job ending and anything being")
+    print("downloaded -- ladder_p3f is done around the one-hour mark, four hours")
+    print("before the campaign is. Everything that is not weights is already in")
+    print("cloud_numbers.tar.gz, which cell 7 now rebuilds every time you poll.")
     print("\non the Mac, in whatever order you got them:")
-    print("  tar xzf cloud_numbers.tar.gz     # lands in cloud_results/, overwrites nothing")
-    print("  tar xzf cloud_w1_ladder_p6_beta0005.tar.gz   # into checkpoints/ in place")
+    print("  tar xzf cloud_numbers.tar.gz     # lands in cloud_results/, "
+          "overwrites nothing")
+    if written:
+        print(f"  tar xzf {written[0].name}   # weights, into checkpoints/ in place")
+    # runladder rather than runbench first: every point is already trained, so
+    # --skip-done (the default) only reads the checkpoints and rewrites ladder.json --
+    # which is what regenerates the gate warnings and the summary table the report
+    # quotes. A single point trained through loop.main never wrote one.
+    print("  .venv/bin/python -m jpegai.train.runladder --model twobranch-mcm "
+          "--tier full \\")
+    print("      --name ladder_p6 --betas "
+          "0.0002,0.0005,0.001,0.002,0.005,0.012,0.03,0.075,0.2")
     print("  .venv/bin/python -m jpegai.eval.runbench --neural checkpoints/ladder_p6 "
-          "--codecs jpeg,webp,avif --dataset kodak")
+          "\\")
+    print("      --codecs jpeg,webp,avif --anchor jpeg --dataset kodak --out p6_9pt")
 
 
 _package()
 
-# ============ CELL 9 — fill ladder_p6's rate hole (50k steps, ~40 min) ========
-# This closes the one real methodological weakness in the headline BD-rate.
-# ladder_p6 jumps beta 0.002 -> 0.012, which is 0.456 -> 0.963 bpp: a 2.1x hole
-# with FOUR of JPEG's eleven Kodak points inside it, so PCHIP interpolates the
-# neural curve straight across the anchor's densest region to produce the number.
-# One point at beta 0.005 (lambda*255^2 = 325, ~0.6 bpp) removes it.
+# ========= CELL 9 — the low-rate point that widens the overlap (50k, ~50 min) =====
+# The rate hole this cell used to fill is FILLED: checkpoints/ladder_p6/beta0.005 is
+# trained, banked on the Mac, and already inside the -16.2% AVG headline (it moved the
+# number 0.8 points on its own, from -15.4). Do not retrain it. This cell now goes
+# after the one remaining structural weakness in that headline, which is the OVERLAP.
 #
-# Running it HERE rather than on the Mac is defensible now that sweep_w6 has
-# landed: same model, tier, beta, batch, seed and step count as the Mac's
-# ladder_p6/beta0.012, and it came in at 0.9571 bpp / 32.58 dB against the Mac's
-# 0.9628 / 32.59 -- 0.6% cheaper at equal PSNR, so the CUDA and MPS paths agree
-# to 0.01 dB. One CUDA point in an MPS ladder costs far less than the hole does.
-# Say so in the report rather than hiding it.
+# BD-rate is only defined where the two curves overlap on the METRIC axis, and the
+# Kodak run reports 7 of JPEG's 11 quality points. Four are excluded, and they fail
+# for two completely different reasons:
 #
-# The warm start has to be ladder_p6/beta0.002, which is what --skip-done would
-# have chained from on the Mac. On the Mac:
+#   q85 41.17 dB, q92 44.62, q96 47.92   -- above our psnr_hvs ceiling of 40.65. This
+#       is the Tier-A capacity finding again, one tier up: no amount of rate reaches
+#       them, so they are out of scope for any run, and 250,000 steps would not help.
+#   q10 25.09 dB                          -- BELOW our floor of 25.25. Missed by
+#       0.16 dB. One cheap point fixes it.
+#
+# So 8/11 is one 50,000-step run away and 9/11 is not available at any price. Worth
+# doing because the truncation is currently CONSERVATIVE in a way that costs us the
+# best part of the curve: the excluded low end is exactly where the codec is ahead of
+# JPEG by 21.2%, so extending the floor pulls the integration window down into
+# favourable territory rather than merely making it wider.
+#
+# WHY beta 0.0002 AND NOT 0.0003. The floor has to drop by at least 0.16 dB and the
+# error is asymmetric: overshooting costs nothing at all (a point below the anchor's
+# own floor simply does not get integrated, and it still improves the curve's shape
+# where PCHIP needs it), while undershooting wastes the entire 50,000 steps and
+# leaves the overlap at 7/11. beta 0.0005 -> 0.0002 is a 2.5x cut in lambda*255^2
+# (32.5 -> 13.0) against a required 0.16 dB, which is generous on purpose. 0.0002 is
+# also the bottom of config.rate.beta_list, so it is a documented grid member rather
+# than a number invented for this run.
+#
+# The warm start must be ladder_p6/beta0.0005 -- the adjacent point, and the one
+# --skip-done would have chained from on the Mac. Build it there:
 #
 #   .venv/bin/python cloud/make_seed.py --ladder checkpoints/ladder_p6 \
-#       --betas 0.002 --out cloud/seeds_p6
+#       --betas 0.0005 --out cloud/seeds_p6low
+#   mv cloud/seeds_p6low/seeds.tar.gz cloud/seeds_p6low/seed_p6low.tar.gz
 #
-# then upload cloud/seeds_p6/seeds.tar.gz. Its NAME does not matter: this cell
-# reads the CONTENTS of every archive it can find and takes the one holding the
-# member it needs, which is also why the stale seeds.tar*.gz copies already in
-# the notebook folder cannot fool it.
+# The rename is only so it cannot be confused with the ladder_p5 seed cell 2b wants;
+# this cell matches on archive CONTENTS, not names, so any name in fact works.
 #
-# It calls loop.py directly for a single point instead of going through
-# runladder -- exactly how beta0.0005 and beta0.001 were trained -- so the
-# checkpoint lands inside the existing ladder_p6 tree. ladder.json is stale
-# afterwards by design; regenerate it on the Mac, as with those two.
-#
-# This is a 4th concurrent job against 4 vCPUs, i.e. back to tier 1's load. The
-# three tier-2 runs slow proportionally; nothing else changes.
+# It calls loop.py directly for a single point instead of going through runladder --
+# exactly how beta0.0005, beta0.001 and beta0.005 were trained -- so the checkpoint
+# lands inside the existing ladder_p6 tree. ladder.json is stale afterwards by
+# design; regenerate it on the Mac, as with those three.
 
-def _fill_hole():
+def _low_point():
     import tarfile
 
-    want = "checkpoints/ladder_p6/beta0.002/final.pt"
+    want = "checkpoints/ladder_p6/beta0.0005/final.pt"
     seed = ROOT / want
-    log = ROOT / "logs" / "cloud_p6_hole.log"
+    log = ROOT / "logs" / "cloud_p6_low.log"
 
     if log.exists():
         print(f"log exists, not relaunching (delete logs/{log.name} to force)")
         return
 
     if not seed.exists():
-        # Content-addressed rather than name-addressed: three stale seeds.tar*.gz
+        # Content-addressed rather than name-addressed: several stale seeds.tar*.gz
         # are already sitting next to the notebook and none of them holds this
         # member, so matching on the filename would pick the wrong archive.
         cands = []
@@ -692,15 +997,15 @@ def _fill_hole():
                     names = t.getnames()
             except Exception:
                 continue                      # not a tar, or a partial upload
-            if any(n.endswith("ladder_p6/beta0.002/final.pt") for n in names):
+            if any(n.endswith("ladder_p6/beta0.0005/final.pt") for n in names):
                 print(f"seed found inside {c}")
                 subprocess.run(["tar", "xzf", str(c), "-C", str(ROOT)], check=True)
                 break
         else:
-            print(f"NO SEED for the hole point -- need {want} here.\n"
+            print(f"NO SEED for the low point -- need {want} here.\n"
                   f"  On the Mac:  .venv/bin/python cloud/make_seed.py "
-                  f"--ladder checkpoints/ladder_p6 --betas 0.002 --out cloud/seeds_p6\n"
-                  f"  then upload cloud/seeds_p6/seeds.tar.gz anywhere in the box.\n"
+                  f"--ladder checkpoints/ladder_p6 --betas 0.0005 --out cloud/seeds_p6low\n"
+                  f"  then upload cloud/seeds_p6low/seeds.tar.gz anywhere in the box.\n"
                   f"  Scanned {len(cands)} archive(s); none held that member.\n"
                   f"  Refusing to start cold: an unseeded point is not comparable to "
                   f"the ladder it is joining, which is the entire purpose here.")
@@ -711,10 +1016,10 @@ def _fill_hole():
               f"different internal layout than make_seed.py writes")
         return
 
-    _HOLE_LAUNCH(want, log)
+    _LOW_LAUNCH(want, log)
 
 
-def _HOLE_LAUNCH(want, log):
+def _LOW_LAUNCH(want, log):
     # A second runner beside cloud_run.py, because this one enters loop.main (a
     # single rate point) rather than runladder.main (a whole ladder). Same two
     # preambles: the in-RAM loader patch and cudnn autotuning, TF32 still off.
@@ -729,19 +1034,19 @@ def _HOLE_LAUNCH(want, log):
 
     # --name carries the beta subdirectory itself, which is the convention
     # runladder uses (`f"{name}/beta{label}"`), so the checkpoint lands at
-    # checkpoints/ladder_p6/beta0.005/ and runbench picks it up with no flags.
-    argv = (f"--model twobranch-mcm --tier full --beta 0.005 --iterations 50000 "
-            f"--name ladder_p6/beta0.005 --warm-start {want} {COMMON}")
+    # checkpoints/ladder_p6/beta0.0002/ and runbench picks it up with no flags.
+    argv = (f"--model twobranch-mcm --tier full --beta 0.0002 --iterations 50000 "
+            f"--name ladder_p6/beta0.0002 --warm-start {want} {COMMON}")
     cmd = (f"setsid env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1 "
            f"nohup {sys.executable} {runner.name} {argv} > {log} 2>&1 &")
     subprocess.Popen(cmd, shell=True, cwd=ROOT)
-    print(f"launched ladder_p6/beta0.005  (lambda*255^2 = {0.005 * 255 ** 2:.0f}, "
-          f"expect ~0.6 bpp)  -> logs/{log.name}")
-    print("cell 7 will not show it -- it iterates JOBS. Tail it with:")
-    print("  print((ROOT / 'logs' / 'cloud_p6_hole.log').read_text()[-1500:])")
+    print(f"launched ladder_p6/beta0.0002  (lambda*255^2 = {0.0002 * 255 ** 2:.1f}, "
+          f"expect well under 0.2 bpp)  -> logs/{log.name}")
+    print("cell 7 picks it up automatically -- it iterates logs/cloud_*.log, and with")
+    print("no ladder.json for a single point it falls back to the log's own bpp lines.")
 
 
-_fill_hole()
+_low_point()
 
 # ---- the other thing worth doing with spare hours -----------------------------
 # `ladder_p5_cont` in tier 2 gives the MCM attribution at ONE rate point, which is

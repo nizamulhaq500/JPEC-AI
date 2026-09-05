@@ -1,0 +1,31 @@
+{
+ "points": [
+  {
+   "beta": 0.002,
+   "lambda255": 130.05,
+   "step": 60,
+   "valid_bpp": 0.12660519778728485,
+   "valid_psnr": 8.052761495113373,
+   "act_bpp": 0.12687174479166666,
+   "gap_q_pct": 0.21053292373957475,
+   "gap_pct": 0.21053292373957475,
+   "y_oor_pct": 0.0,
+   "y_exact": true,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_smoke/beta0.002/final.pt"
+  },
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 60,
+   "valid_bpp": 0.1265547275543213,
+   "valid_psnr": 8.104670405387878,
+   "act_bpp": 0.12679036458333334,
+   "gap_q_pct": 0.1861966204891686,
+   "gap_pct": 0.1861966204891686,
+   "y_oor_pct": 0.0,
+   "y_exact": true,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_smoke/beta0.012/final.pt"
+  }
+ ],
+ "elapsed_s": 60.5
+}

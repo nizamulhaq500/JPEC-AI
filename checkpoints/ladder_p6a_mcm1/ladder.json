@@ -1,0 +1,45 @@
+{
+ "points": [
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 50000,
+   "valid_bpp": 0.9613842666149139,
+   "valid_psnr": 32.5829017162323,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.7037760416666666,
+   "gap_q_pct": 0.18125752236180911,
+   "gap_pct": 1.0545820939927164,
+   "y_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 71.6376953125,
+   "worst_stream_pct": 5.376742876953601,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6a_mcm1/beta0.012/final.pt"
+  },
+  {
+   "beta": 0.03,
+   "lambda255": 1950.75,
+   "step": 50000,
+   "valid_bpp": 1.3928525894880295,
+   "valid_psnr": 34.08447337150574,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.0096028645833333,
+   "gap_q_pct": 0.06798276814343948,
+   "gap_pct": 0.7740430335362227,
+   "y_oor_pct": 0.0005425347353593679,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 25.8448486328125,
+   "worst_stream_pct": 2.216244433899922,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6a_mcm1/beta0.03/final.pt"
+  }
+ ],
+ "elapsed_s": 49660.2
+}

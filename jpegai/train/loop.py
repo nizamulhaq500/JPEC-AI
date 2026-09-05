@@ -1,6 +1,7 @@
 """Training loop.
 
     python -m jpegai.train.loop --tier tierA --beta 0.002 --iterations 60000
+    python -m jpegai.train.loop --model twobranch-vr --model-id 1 --stage III
 
 Two optimisers, which is not optional and is the part people get wrong:
 
@@ -20,6 +21,13 @@ the round-trip check, hundreds of thousands of steps later.
 So the loop runs the round-trip check *during* training (`--rtcheck`), not after.
 It costs one image every few thousand steps and it is the only signal that says
 the real coder agrees with the loss curve.
+
+`--stage` runs one row of the variable-rate paper's Table II: it takes beta, the loss
+type, the step budget and the **freeze list** from `jpegai.train.stages`, so a stage
+III run trains the decoder and entropy network and provably nothing else. Stages chain
+through `--warm-start`, not `--resume`: the optimiser's param groups change between
+stages by construction, so loading the old optimiser state would raise before it ever
+reached the weights.
 """
 
 from __future__ import annotations
@@ -37,6 +45,9 @@ from jpegai.models import KINDS, build_any_model
 from jpegai.models.hyperprior import summarise
 from jpegai.train.dataset import build_loaders
 from jpegai.train.losses import MSE_SCALE, loss_from_config
+from jpegai.train.stages import (STAGE_NAMES, anchor_beta, apply_freeze,
+                                 aux_is_trained, check_partition, find_stage,
+                                 part_parameters, sample_delta_beta, stage_steps)
 from jpegai.utils import describe_device, pick_device, seed_everything
 
 CHECKPOINT_ROOT = PROJECT_ROOT / "checkpoints"
@@ -116,6 +127,126 @@ def out_of_range_fraction(entropy_model, symbols: torch.Tensor,
     below = symbols < off
     above = symbols >= off + length
     return float((below | above).float().mean())
+
+
+@torch.no_grad()
+def delta_beta_check(model, valid, device, *, index: int = 0,
+                     points=None) -> dict:
+    """The Phase 8 arm of the gate: is the rate ladder real, and is Delta_beta = 0 free?
+
+    Empty for a model with no gain unit, so the caller can ask unconditionally.
+
+    Four properties, each one a bug this project can actually produce.
+
+    **1. Delta_beta = 0 adds exactly nothing.** eq. (10)'s offset is *additive on
+    Isigma*, so `offset(0)` must be the gain vector bit-for-bit -- and while the vector
+    is still at its zero initialisation the multiplier must be exactly 1.0, which is
+    what lets Table II's stage IV bolt a gain unit onto a trained checkpoint as a no-op.
+    Checked as **bitwise tensor equality**, not with a tolerance: the failure mode is
+    `Delta_beta` arriving as a float and dragging the offset by an ULP, which moves a
+    handful of symbols onto the neighbouring CDF row. That costs a fraction of a percent
+    of rate -- far too little to see in a loss curve, and permanent.
+
+    `beta_unit_gain` reports whether the multiplier is *still* exactly 1, which is true
+    at initialisation and legitimately false after stage III trains the vector. It is
+    reported, not gated: gating on it would fail every stage IV run.
+
+    **2. Fig. 9's cache agrees with the direct path.** Bit-rate matching encodes one
+    picture ten times through `precompress`/`compress_cached`, reusing everything up to
+    the gain unit. If that cache ever goes stale the rate search optimises a rate the
+    real encoder will not produce, and every BRM number afterwards is fiction. Compared
+    as **byte equality of the four strings**, per rung, because a stale cache off by one
+    training step produces a perfectly valid packet at a slightly wrong rate.
+
+    **3. Rate is non-decreasing in Delta_beta.** This is the *precondition of eq. (14)'s
+    bisection* -- the search assumes it and returns an arbitrary point without it.
+    Measured on an untrained Tier A model, `R(Delta_beta)` is a step function with
+    plateaus about 128-136 wide (one CDF row), because an untrained model's Isigma is
+    nearly constant across elements; 222 probes at stride 8 across the whole clamp gave
+    13 changes and **zero decreases**. So this checks monotonicity, not strict increase:
+    equal neighbours are normal, a decrease is the fault.
+
+    **4. Every rung decodes bit-exact.** The offset is applied symmetrically at the two
+    ends, and this is the arm that catches a `Delta_beta` written to the header in one
+    convention and read in another -- a bug that leaves the encoder's own numbers
+    perfect and only shows up in the reconstruction.
+
+    Also returns the ladder itself and its span, because the span is what says whether a
+    checkpoint is worth benchmarking: a gain unit whose vector has collapsed passes all
+    four arms above and delivers a span of 1.0x. And `beta_sat_high`, the fraction of
+    `Isigma + o` that runs off the top of the sigma table at the ladder's top rung --
+    past `max_index` the coder's sigma stops growing while the scaled residual does not,
+    so the residual's tail leaves the CDF's support. Anything above a fraction of a
+    percent there means `rate.beta_train_sample` is reaching further than this
+    checkpoint can actually deliver.
+    """
+    if not getattr(model, "gain", False):
+        return {}
+    from jpegai.models.gain import DELTA_BETA_MAX, DELTA_BETA_MIN
+
+    model.eval()
+    model.update(force=True)
+    x = valid[index].unsqueeze(0).to(device)
+    ladder = sorted({int(d) for d in
+                     (points if points is not None
+                      else (DELTA_BETA_MIN, 0, DELTA_BETA_MAX))})
+
+    # (1) the identity, as arithmetic on the offset rather than as a rate comparison.
+    # A rate comparison cannot see this: `compress(x)` and `compress(x, delta_beta=0)`
+    # are the same call, so comparing their bytes would assert nothing at all.
+    neutral, unit = True, True
+    for branch in (model.branch_y, model.branch_uv):
+        g = branch.gain
+        neutral = neutral and bool(torch.equal(g.offset(0), g.vector))
+        unit = unit and bool(torch.equal(g.scale(g.offset(0)),
+                                         torch.ones_like(g.vector)))
+
+    npix = x.shape[-1] * x.shape[-2]
+    cache = model.precompress(x)
+    bpps, cache_ok, exact, worst_err = [], True, True, 0.0
+    for d in ladder:
+        packet = model.compress(x, delta_beta=d)
+        bpps.append(model.packet_bytes(packet) * 8 / npix)
+
+        # (2) the same rung through the search's cache.
+        cached = model.compress_cached(cache, delta_beta=d)
+        cache_ok = cache_ok and all(
+            packet[p][k] == cached[p][k]
+            for p in ("luma", "chroma") for k in ("y_strings", "z_strings"))
+
+        # (4) every rung survives the round trip, not just the anchor.
+        dec = model.decompress(packet, device=device)
+        ref = model(x, noise=False, ste=True, delta_beta=d)
+        err = (float((dec["y_hat"] - ref["y_hat"]).abs().max())
+               if dec["y_hat"].shape == ref["y_hat"].shape else float("inf"))
+        worst_err = max(worst_err, err)
+        exact = exact and err == 0.0
+
+    # (3) monotone, with a tolerance of exactly zero. A plateau is fine; a dip is not.
+    drops = [bpps[i] - bpps[i - 1] for i in range(1, len(bpps))
+             if bpps[i] < bpps[i - 1]]
+    top = model(x, noise=False, ste=True, delta_beta=ladder[-1])
+    sat = model.branch_y.gain.saturation(
+        top["i_sigma"], top["gain_offset"], max_index=model.sigma_index.max_index)
+
+    model.train()
+    return {
+        "beta_points": ladder,
+        "beta_bpps": [round(b, 6) for b in bpps],
+        "beta_anchor_bpp": bpps[ladder.index(0)] if 0 in ladder else 0.0,
+        "beta_span": max(bpps) / max(min(bpps), 1e-9),
+        "beta_neutral": neutral,
+        "beta_unit_gain": unit,
+        "beta_cache_ok": cache_ok,
+        "beta_monotone": not drops,
+        "beta_worst_drop": min(drops, default=0.0),
+        "beta_exact": exact,
+        "beta_maxerr": worst_err,
+        "beta_header_b": model.header_bytes(model.compress(x, delta_beta=0)),
+        "beta_sat_high": 100.0 * sat["high"],
+        "beta_sat_low": 100.0 * sat["low"],
+        "beta_ok": neutral and cache_ok and not drops and exact,
+    }
 
 
 @torch.no_grad()
@@ -374,15 +505,63 @@ def train(args) -> int:
     device = pick_device(args.device, verbose=True)
 
     model = build_any_model(cfg, args.model).to(device)
+
+    # -- Table II, if a stage was named ------------------------------------
+    # Resolved before the loss and the optimiser, because it supplies both: the stage
+    # owns beta (stages III/IV of models 1-3 raise it), the loss type (stage I is pure
+    # MSE), the step budget, and the freeze list.
+    stage = None
+    beta_override = False
+    if args.stage:
+        stage = find_stage(cfg, args.model_id, args.stage,
+                           sample_delta_beta=not args.no_sample_delta_beta)
+        # The partition invariant, checked on the real model before anything trains.
+        # Freezing is the *complement* of the stage's part list, so a parameter in no
+        # bucket would be frozen in every stage: it trains nowhere, the loss still
+        # falls, and the only symptom is a codec quietly worse than it should be.
+        check_partition(model)
+        apply_freeze(model, stage.parts)
+        # An explicit `--beta` still wins -- it is how the reference software's 0.012
+        # for model 1 gets measured against Table II's 0.007 -- but it is announced,
+        # because it also silently invalidates the eq. 9 anchor for that ladder.
+        if args.beta is None:
+            args.beta = stage.beta
+        else:
+            beta_override = args.beta != stage.beta
+
     criterion = loss_from_config(cfg, beta=args.beta,
-                                 colour_space=args.colour_space).to(device)
+                                 colour_space=args.colour_space,
+                                 **(stage.loss_kwargs() if stage else {})).to(device)
     loader, valid = build_loaders(cfg, batch=args.batch, workers=args.workers,
                                  valid_limit=args.valid_images)
 
-    opt = torch.optim.Adam(model.main_parameters(), lr=cfg.train.lr)
+    # The optimiser gets only what this stage trains. Both halves of freezing are
+    # needed: `apply_freeze` cleared `requires_grad` so no gradients accumulate, and
+    # keeping the tensors out of Adam is what stops a momentum buffer from moving a
+    # frozen weight anyway.
+    aux_ids = {id(p) for p in model.aux_parameters()}
+    trainable = (model.main_parameters() if stage is None else
+                 [p for p in part_parameters(model, stage.parts)
+                  if id(p) not in aux_ids])
+    if not trainable:
+        raise SystemExit(f"stage {args.stage} trains nothing on {args.model}: "
+                         f"parts {stage.parts} are empty on this architecture")
+    opt = torch.optim.Adam(trainable, lr=cfg.train.lr)
+    # The quantiles live in the `entropy` bucket, so a stage that freezes the entropy
+    # network must stop optimising them too. Letting them keep moving under a frozen
+    # density would rewiden the CDF table and change the bytes a frozen entropy model
+    # produces -- Table II's stage IV freezes `entropy` for every model, so this is not
+    # hypothetical. The optimiser is still *built* either way, because `save_checkpoint`
+    # serialises its state and a stage-IV checkpoint has to stay loadable by a stage that
+    # does train the quantiles; only the backward and the step are gated, so no momentum
+    # accumulates while it is off.
+    aux_on = stage is None or aux_is_trained(model, stage.parts)
     aux_opt = torch.optim.Adam(model.aux_parameters(), lr=args.aux_lr)
 
     run = args.name or f"{args.tier}-{args.model}-beta{args.beta:g}"
+    if stage is not None:
+        run = args.name or (f"{args.tier}-{args.model}-m{stage.model_id}"
+                            f"-stage{stage.name}")
     out_dir = CHECKPOINT_ROOT / run
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "log.jsonl"
@@ -423,11 +602,34 @@ def train(args) -> int:
             raise FileNotFoundError(ck)
 
     total = args.iterations or cfg.train.iterations
+    if stage is not None and args.iterations is None:
+        # The paper's epoch counts become *shares* of a step budget, because the dataset
+        # here is not CTTC's 5264 sequences. 64:32:20:12 of `train.iterations` preserves
+        # the one thing those counts encode -- stage I is half the run, stage IV a tenth.
+        total = stage_steps(cfg, args.model_id, stage.name, total,
+                            sample_delta_beta=not args.no_sample_delta_beta)
 
     print(f"\nrun      {run}")
     print(f"device   {describe_device(device)}")
     print(f"beta     {criterion.beta:g}  (== compressai lambda*255^2 "
           f"{criterion.beta * MSE_SCALE:.0f})")
+    if stage is not None:
+        print(f"stage    {stage.summary()}")
+        if beta_override:
+            print(f"         ** --beta {args.beta:g} overrides Table II's "
+                  f"{stage.beta:g} for this stage; the eq. 9 anchor below is the "
+                  f"config's, so a ladder built from it will be offset")
+        print(f"         anchor beta {anchor_beta(cfg, args.model_id):g}  "
+              f"(eq. 9 divides by stage I's beta, not this stage's)")
+        n_par = sum(p.numel() for p in trainable)
+        n_all = sum(p.numel() for p in model.parameters())
+        print(f"         {n_par:,} of {n_all:,} scalars trainable "
+              f"({100 * n_par / max(n_all, 1):.1f}%)"
+              + ("" if aux_on else "; aux optimiser off -- entropy is frozen"))
+        if stage.sample_delta_beta:
+            lo, hi = (int(v) for v in cfg.rate.beta_train_sample)
+            print(f"         dbeta ~ U[{lo}, {hi}] per step (OURS: the paper's single "
+                  f"gain vector never sees a non-zero dbeta in training)")
     print(f"steps    {start:,} -> {total:,}   batch {loader.batch_size}  "
           f"crop {cfg.train.crop}")
     print(f"out      {out_dir.relative_to(PROJECT_ROOT)}")
@@ -454,7 +656,12 @@ def train(args) -> int:
                 g["lr"] = lr
 
             x = x.to(device, non_blocking=True)
-            out = model(x)                        # noise=training -> True here
+            # One integer `Delta_beta` per *batch*, not per image: the gain unit is a
+            # channel-wise map applied to the whole tensor, and a per-image offset would
+            # need the map broadcast per sample, which is neither what the header carries
+            # nor what the coder does. Zero unless this stage trains the gain unit.
+            d_beta = sample_delta_beta(cfg) if (stage and stage.sample_delta_beta) else 0
+            out = model(x, delta_beta=d_beta)     # noise=training -> True here
             r = criterion(out, x)
 
             if not torch.isfinite(r["loss"]):
@@ -469,16 +676,20 @@ def train(args) -> int:
             opt.zero_grad(set_to_none=True)
             r["loss"].backward()
             if cfg.train.grad_clip:
-                torch.nn.utils.clip_grad_norm_(model.main_parameters(),
-                                               cfg.train.grad_clip)
+                # Clipped over what this stage trains, not over every parameter. The
+                # norm is a global quantity: including frozen tensors whose `.grad` is
+                # None is harmless, but including *trained-elsewhere* tensors would make
+                # the clip threshold mean something different in every stage.
+                torch.nn.utils.clip_grad_norm_(trainable, cfg.train.grad_clip)
             opt.step()
 
             # The aux loss touches only `quantiles`, so its graph is disjoint from
             # the RD graph and the order of the two backward passes is irrelevant.
             aux = model.aux_loss()
-            aux_opt.zero_grad(set_to_none=True)
-            aux.backward()
-            aux_opt.step()
+            if aux_on:
+                aux_opt.zero_grad(set_to_none=True)
+                aux.backward()
+                aux_opt.step()
 
             # `.detach()` before `float()`: the tensors still carry graph
             # references here, and torch warns about it on every window. The
@@ -492,6 +703,12 @@ def train(args) -> int:
                 if k in r:
                     window[k] = window.get(k, 0.0) + float(r[k].detach())
             window["aux"] = window.get("aux", 0.0) + float(aux.detach())
+            if stage is not None and stage.sample_delta_beta:
+                # Averaged like everything else, and worth watching: the mean should sit
+                # near the midpoint of `beta_train_sample`, and the window's bpp should
+                # visibly track it. A bpp that does not move with dbeta means the gain
+                # vector is not reaching the rate -- which trains fine and looks fine.
+                window["dbeta"] = window.get("dbeta", 0.0) + d_beta
             window_n += 1
             step += 1
 
@@ -508,6 +725,8 @@ def train(args) -> int:
                 if "chroma_share" in m:
                     extra = (f"  Y/U/V {m['psnr_y']:5.2f}/{m['psnr_u']:5.2f}/"
                              f"{m['psnr_v']:5.2f}  chroma {100 * m['chroma_share']:4.1f}%")
+                if "dbeta" in m:
+                    extra += f"  dbeta {m['dbeta']:+7.1f}"
                 print(f"{step:>7,}/{total:,}  loss {m['loss']:8.4f}  "
                       f"bpp {m['bpp']:6.4f}  psnr {m['psnr']:6.2f}  "
                       f"aux {m['aux']:8.2f}  lr {lr:.2e}  "
@@ -557,6 +776,36 @@ def train(args) -> int:
                       f"yhat {yhat}  psnr {rt['psnr']:5.2f}  {flag}", flush=True)
                 with log_path.open("a") as f:
                     f.write(json.dumps({"step": step, "rtcheck": rt}) + "\n")
+                # The rate axis, on the same cadence and the same image. Empty for a
+                # fixed-rate model, so this costs nothing outside Phase 8. It is a
+                # separate line rather than more columns on the one above because it
+                # is a different claim: rtcheck says the coder agrees with the loss at
+                # one rate, this says the *ladder* one checkpoint spans is ordered and
+                # decodes. Both can pass alone and the codec still be wrong.
+                db = delta_beta_check(model, valid, device)
+                if db:
+                    dflag = "ok" if db["beta_ok"] else "**"
+                    rungs = "  ".join(f"{d:+5d} {b:.4f}" for d, b in
+                                      zip(db["beta_points"], db["beta_bpps"]))
+                    print(f"        dbeta    {rungs}  span {db['beta_span']:4.2f}x"
+                          f"  sat {db['beta_sat_high']:.2f}/{db['beta_sat_low']:.2f}%"
+                          f"  {dflag}", flush=True)
+                    if not db["beta_ok"]:
+                        # Say which arm, not just that something failed. The four are
+                        # independent faults with different causes: a non-neutral
+                        # offset is a gain-unit bug, a cache mismatch is a
+                        # `precompress` bug, a rate decrease is a saturated or
+                        # sign-flipped vector, and an inexact decode is the coder.
+                        bad = [n for n, k in (("neutral", "beta_neutral"),
+                                              ("cache", "beta_cache_ok"),
+                                              ("monotone", "beta_monotone"),
+                                              ("exact", "beta_exact"))
+                               if not db[k]]
+                        print(f"        ** dbeta fails: {', '.join(bad)}"
+                              f"  (worst drop {db['beta_worst_drop']:+.4f} bpp,"
+                              f" maxerr {db['beta_maxerr']:.3g})", flush=True)
+                    with log_path.open("a") as f:
+                        f.write(json.dumps({"step": step, "dbeta": db}) + "\n")
 
             if step % args.valid_every == 0:
                 v = validate(model, valid, criterion, device)
@@ -575,9 +824,21 @@ def train(args) -> int:
     model.update(force=True)
     v = validate(model, valid, criterion, device)
     rt = roundtrip_check(model, valid, device)
+    # The final gate walks the *published* ladder (`beta_eval_points`, nine points
+    # across the clamp) rather than the three-point cadence version, because this is
+    # the number a later `runbench --delta-beta` sweep will be compared against and
+    # the ends are where the sigma table saturates. Empty dict for a fixed-rate
+    # model, so every pre-Phase-8 run behaves exactly as before.
+    db = delta_beta_check(model, valid, device,
+                          points=getattr(cfg.rate, "beta_eval_points", None)
+                          if hasattr(cfg, "rate") else None)
     save_checkpoint(out_dir / "final.pt", model, opt, aux_opt, step,
                     {"tier": args.tier, "model": args.model, "beta": criterion.beta,
                      "valid": v, "rtcheck": rt,
+                     **({"stage": stage.name, "model_id": stage.model_id,
+                         "anchor_beta": anchor_beta(cfg, stage.model_id)}
+                        if stage is not None else {}),
+                     **({"dbeta": db} if db else {}),
                      "valid_set": getattr(valid, "roots", None),
                      "valid_images": [valid.name(i) for i in range(len(valid))]})
     print(f"\nfinal    bpp {v['bpp']:.4f}  psnr {v['psnr']:.2f}")
@@ -602,6 +863,38 @@ def train(args) -> int:
                   f"-- the coder is faithful to a table that is not the density the "
                   f"rate loss was trained against")
     print(f"         yhat bit-exact through the coder: {rt['y_exact']}")
+    if db:
+        # The rate axis of the gate. Four independent claims, printed as four lines
+        # rather than one verdict, because they fail for unrelated reasons and a
+        # single "dbeta: FAIL" sends a reader to the wrong file.
+        print(f"gate     Delta_beta ladder over "
+              f"[{db['beta_points'][0]:+d}, {db['beta_points'][-1]:+d}]"
+              f"   ({len(db['beta_points'])} points, anchor "
+              f"{db['beta_anchor_bpp']:.4f} bpp)")
+        for d, b in zip(db["beta_points"], db["beta_bpps"]):
+            mark = "  <- anchor" if d == 0 else ""
+            print(f"           {d:+5d}  {b:.4f} bpp  "
+                  f"({b / max(db['beta_anchor_bpp'], 1e-9):5.2f}x){mark}")
+        print(f"         span {db['beta_span']:.2f}x  "
+              f"monotone {db['beta_monotone']}"
+              + ("" if db["beta_monotone"]
+                 else f" (worst drop {db['beta_worst_drop']:+.4f} bpp)"))
+        print(f"         Delta_beta = 0 is the identity: offset neutral "
+              f"{db['beta_neutral']}, scale unity {db['beta_unit_gain']}"
+              f"   <- the second one is False once stage III trains the vector, "
+              f"which is correct")
+        print(f"         cached encode matches direct encode at every rung: "
+              f"{db['beta_cache_ok']}")
+        print(f"         yhat bit-exact at every rung: {db['beta_exact']}"
+              + ("" if db["beta_exact"] else f"  (maxerr {db['beta_maxerr']:.3g})"))
+        print(f"         sigma table saturation at the top rung: "
+              f"high {db['beta_sat_high']:.2f}%  low {db['beta_sat_low']:.2f}%"
+              f"   <- a few % is the ladder's real ceiling, not a bug")
+        print(f"         header {db['beta_header_b']} B carries the rate; one "
+              f"checkpoint, {len(db['beta_points'])} rate points")
+        if not db["beta_ok"]:
+            print("         ** the gain unit does not round-trip -- the ladder "
+                  "above is not a rate ladder this checkpoint can actually decode")
     print(f"wrote    {(out_dir / 'final.pt').relative_to(PROJECT_ROOT)}")
     return 0
 
@@ -613,8 +906,10 @@ def main(argv=None) -> int:
                     help="twobranch = Phase 4's primary/secondary YCbCr split; "
                          "twobranch-split = Phase 5's split hyper decoders; "
                          "twobranch-mcm = Phase 6's 4-stage context model "
-                         "(-mcm2 / -mcm1 are the stage ablation). Use --warm-start "
-                         "to inherit a Phase 5 ladder's weights")
+                         "(-mcm2 / -mcm1 are the stage ablation); twobranch-vr = "
+                         "Phase 8's variable-rate codec, split backbone plus a gain "
+                         "unit per branch, which is the kind --stage expects. Use "
+                         "--warm-start to inherit a Phase 5 ladder's weights")
     ap.add_argument("--beta", type=float, default=None,
                     help="distortion weight; default config.rate.base_model_beta")
     ap.add_argument("--iterations", type=int, default=None)
@@ -640,8 +935,39 @@ def main(argv=None) -> int:
     ap.add_argument("--valid-images", type=int, default=8)
     ap.add_argument("--rtcheck", type=int, default=2000,
                     help="run the estimated-vs-actual gate every N steps; 0 disables")
+    # -- Table II's four-stage variable-rate schedule (Phase 8) ------------------
+    ap.add_argument("--stage", default=None, choices=list(STAGE_NAMES),
+                    help="run one row of the variable-rate paper's Table II. The "
+                         "stage supplies beta, the loss type (I is pure MSE, II-IV "
+                         "are the mixed loss), the step budget as its share of the "
+                         "epoch counts, and the freeze list: I/II train "
+                         "encoder+decoder+entropy, III and IV train less. Omit for "
+                         "an ordinary single-stage run, which is every phase before "
+                         "this one. Chain stages with --warm-start, never --resume: "
+                         "the optimiser's param groups change between stages by "
+                         "construction")
+    ap.add_argument("--model-id", type=int, default=0,
+                    help="which of Table II's four rate models to follow, by its "
+                         "`id` in config.rate.models -- not its position in the "
+                         "list. Model 0 is the low-rate anchor and the only one "
+                         "whose stage IV trains the gain unit alone; models 1-3 "
+                         "raise beta for stages III/IV and train the decoder "
+                         "alongside the gain unit. Only read when --stage is given")
+    ap.add_argument("--no-sample-delta-beta", action="store_true",
+                    help="hold Delta_beta at 0 through stages III/IV instead of "
+                         "sampling config.rate.beta_train_sample. This reproduces "
+                         "the reference software's literal behaviour, where the "
+                         "gain unit is an 18-vector table and a fixed training beta "
+                         "still exercises the interpolation. With JPEG AI's single "
+                         "gain vector it means the vector never sees a non-zero "
+                         "offset in training and then has to hold across the whole "
+                         "clamp at evaluation, so sampling is the default. Use this "
+                         "to measure what the sampling buys")
     args = ap.parse_args(argv)
-    if args.beta is None:
+    # Conditional, because `--stage` owns beta: stages III/IV of models 1-3 raise it
+    # to `beta_stage34`, and filling in the config default here would silently win
+    # over Table II before `train()` ever sees `None`.
+    if args.beta is None and args.stage is None:
         args.beta = load_config(args.tier).rate.base_model_beta
     return train(args)
 

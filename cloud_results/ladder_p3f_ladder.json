@@ -1,0 +1,110 @@
+{
+ "points": [
+  {
+   "beta": 0.002,
+   "lambda255": 130.05,
+   "step": 50000,
+   "valid_bpp": 0.38364817202091217,
+   "valid_psnr": 29.595600366592407,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.2943793402777778,
+   "gap_q_pct": 0.06881705092372765,
+   "gap_pct": 0.9659706062038955,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 8.056640625,
+   "worst_stream_pct": 0.03832126298707603,
+   "path": "/root/JPEC-AI/checkpoints/ladder_p3f/beta0.002/final.pt"
+  },
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 50000,
+   "valid_bpp": 0.8157306686043739,
+   "valid_psnr": 32.05566596984863,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.6379665798611112,
+   "gap_q_pct": 0.053074603155584946,
+   "gap_pct": 0.4748411846608622,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 19.10546875,
+   "worst_stream_pct": 0.04137093692949491,
+   "path": "/root/JPEC-AI/checkpoints/ladder_p3f/beta0.012/final.pt"
+  },
+  {
+   "beta": 0.03,
+   "lambda255": 1950.75,
+   "step": 50000,
+   "valid_bpp": 1.2122139260172844,
+   "valid_psnr": 33.609344482421875,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.9269748263888888,
+   "gap_q_pct": 0.040595332030430024,
+   "gap_pct": 0.366976620106967,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": false,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 21.46875,
+   "worst_stream_pct": 0.03186856975065048,
+   "path": "/root/JPEC-AI/checkpoints/ladder_p3f/beta0.03/final.pt"
+  },
+  {
+   "beta": 0.075,
+   "lambda255": 4876.875,
+   "step": 50000,
+   "valid_bpp": 1.687581017613411,
+   "valid_psnr": 34.87148118019104,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.3004014756944444,
+   "gap_q_pct": 0.03377987297625241,
+   "gap_pct": 0.19083664748344248,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": false,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 27.875,
+   "worst_stream_pct": 0.029413898396744687,
+   "path": "/root/JPEC-AI/checkpoints/ladder_p3f/beta0.075/final.pt"
+  },
+  {
+   "beta": 0.2,
+   "lambda255": 13005.0,
+   "step": 50000,
+   "valid_bpp": 2.1541757732629776,
+   "valid_psnr": 35.71580934524536,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.7347005208333333,
+   "gap_q_pct": 0.03462911854278872,
+   "gap_pct": -0.20990356263217547,
+   "y_oor_pct": 0.0005425347353593679,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y",
+   "worst_stream_b": 39.53125,
+   "worst_stream_pct": 0.031189724009159175,
+   "path": "/root/JPEC-AI/checkpoints/ladder_p3f/beta0.2/final.pt"
+  }
+ ],
+ "elapsed_s": 10176.7
+}

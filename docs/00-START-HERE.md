@@ -13,7 +13,7 @@ Everything in `docs/` was produced from a close reading of:
 |---|------|-----------|
 | 1 | [01-foundations.md](01-foundations.md) | The theory you need *before* the paper makes sense: rate–distortion, VAEs as codecs, hyperpriors, context models, quantization tricks, ANS. Not in the paper — this is the missing prerequisite chapter. |
 | 2 | [02-jpeg-ai-explained.md](02-jpeg-ai-explained.md) | The paper itself, section by section, with every number, tensor shape, equation and design rationale, plus critical commentary. |
-| 3 | [03-implementation-plan.md](03-implementation-plan.md) | 14-phase build plan for a working JPEG AI–class codec + demo you can show your professors. |
+| 3 | [03-implementation-plan.md](03-implementation-plan.md) | 14-phase build plan for a working JPEG AI–class codec + demo you can show your professors. Its **[revised roadmap](03-implementation-plan.md#phase-map-revised)** is what the work actually follows now: what is built, what is next, what is cut and why. |
 | 4 | [04-reference-data.md](04-reference-data.md) | Extracted tables, marker codes, tensor-shape cheat sheet, per-metric BD-rate results, implementation checklists. |
 | 5 | [05-tables-figures-verified.md](05-tables-figures-verified.md) | Tables III–VI transcribed from the author-supplied screenshots and checked arithmetically. Establishes that AVG is the unweighted mean of the seven metrics, and that **Kodak (Table V) is our yardstick, not CTC (Table III)**. |
 | 6 | [06-normative-constants.md](06-normative-constants.md) | Every numeric constant we could not get from the paper, extracted from the WG1 **reference software** with file-level provenance. Resolves nine of the ten open questions, and corrects two of my own earlier misreadings. Read this before touching `jpegai/config/*.yaml`. |
@@ -21,13 +21,27 @@ Everything in `docs/` was produced from a close reading of:
 
 ## Current status
 
-Phases 1–3 of the plan are done and verified. Phases 4 (two-branch YCbCr), 5 (split
-hyper decoders, residual coding) and 6 (the multi-stage context model) are all built and
-their *structural* criteria are measured; what remains in all three is the same thing —
-RD comparisons, which need real training runs rather than more code.
+Phases 1–6 are built and measured, and Phase 8 (gain unit, 3D quality map / RoI, bit-rate
+matching, the paper's four-stage schedule) is built but has no trained weights yet. The
+remaining phases are triaged in
+[03-implementation-plan.md § Phase map, revised](03-implementation-plan.md#phase-map-revised)
+— Phase 10 is next, Phases 11 and most of 12 are cut, and the reason for each is recorded
+there. The headline measurement and the decomposition of the gap to the standard live in the
+[README](../README.md); this file is the working record of *why* each phase settled the way it
+did, and it is deliberately not rewritten when a number moves.
+
+Two corrections that this document predates, both worth reading before trusting anything
+below. The multi-stage context model of Phase 6 is worth **1.8% rate** at 200,000 steps, not
+the +0.60 dB it appeared to be worth before controls existed — and all of that comes from the
+paper's *four* stages, since a 1-stage model is worth nothing (controls: `ladder_p5_cont200`,
+no MCM, and `ladder_p6a_mcm1_200`, one stage, both at the same seed, steps, tier and β). And
+BD-rate was computed with a global cubic that is invalid on saturating metrics, which was
+wrong by up to 72 points. Both are written up in
+[07-training-runbook.md](07-training-runbook.md) §5, and the corrected numbers are in the
+[README](../README.md).
 
 Everything that can be checked without trained weights is checked on every commit:
-**322 pytest tests** and **210 self-test checks**, the latter including a bit-exact
+**498 pytest tests** and **210 self-test checks**, the latter including a bit-exact
 encode→decode round trip through a real rANS bitstream for all three internal chroma
 formats × all six entropy-model kinds. Pointed at a trained checkpoint
 (`--checkpoint <path>`) the self-test adds 5 more that only mean something once weights

@@ -1,0 +1,194 @@
+{
+ "points": [
+  {
+   "beta": 0.0002,
+   "lambda255": 13.005,
+   "step": 50000,
+   "valid_bpp": 0.12282707635313272,
+   "valid_psnr": 26.0427188873291,
+   "valid_set": [
+    "/root/JPEC-AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.09114583333333333,
+   "gap_q_pct": 0.5576040970222395,
+   "gap_pct": 3.069997401706564,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 17.0550537109375,
+   "worst_stream_pct": 2.5571906355739324,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.0002/final.pt"
+  },
+  {
+   "beta": 0.0005,
+   "lambda255": 32.5125,
+   "step": 50000,
+   "valid_bpp": 0.21943102404475212,
+   "valid_psnr": 27.657034158706665,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.16053602430555555,
+   "gap_q_pct": -0.7152097131550574,
+   "gap_pct": 2.1650348779113755,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "z",
+   "worst_stream_b": 12.3555908203125,
+   "worst_stream_pct": 1.1748829464086832,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.0005/final.pt"
+  },
+  {
+   "beta": 0.001,
+   "lambda255": 65.025,
+   "step": 50000,
+   "valid_bpp": 0.32357577979564667,
+   "valid_psnr": 28.667181491851807,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.24424913194444445,
+   "gap_q_pct": -0.5159803107313751,
+   "gap_pct": 2.412825062312229,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z",
+   "worst_stream_b": 25.1387939453125,
+   "worst_stream_pct": 2.022654969263427,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.001/final.pt"
+  },
+  {
+   "beta": 0.002,
+   "lambda255": 130.05,
+   "step": 50000,
+   "valid_bpp": 0.4560951292514801,
+   "valid_psnr": 29.451546669006348,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.3608940972222222,
+   "gap_q_pct": -0.1356734935938167,
+   "gap_pct": 2.8241889063777394,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.30815971549600363,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 27.01806640625,
+   "worst_stream_pct": 1.090765582090888,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.002/final.pt"
+  },
+  {
+   "beta": 0.005,
+   "lambda255": 325.125,
+   "step": 50000,
+   "valid_bpp": 0.6192050203680992,
+   "valid_psnr": 30.844403982162476,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.4855685763888889,
+   "gap_q_pct": -0.3948854320217817,
+   "gap_pct": 1.5813500828729792,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y_uv",
+   "worst_stream_b": 9.7578125,
+   "worst_stream_pct": 0.1984004066493523,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.005/final.pt"
+  },
+  {
+   "beta": 0.012,
+   "lambda255": 780.3000000000001,
+   "step": 50000,
+   "valid_bpp": 0.9627989307045937,
+   "valid_psnr": 32.58591604232788,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 0.7045355902777778,
+   "gap_q_pct": 0.18582744387848138,
+   "gap_pct": 1.201384895047186,
+   "y_oor_pct": 0.0,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 73.824462890625,
+   "worst_stream_pct": 5.634700145104453,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.012/final.pt"
+  },
+  {
+   "beta": 0.03,
+   "lambda255": 1950.75,
+   "step": 50000,
+   "valid_bpp": 1.392456792294979,
+   "valid_psnr": 34.11570930480957,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.0056423611111112,
+   "gap_q_pct": 0.05548505756871175,
+   "gap_pct": 0.7514797479912818,
+   "y_oor_pct": 0.00027126736767968396,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": false,
+   "worst_stream": "z_uv",
+   "worst_stream_b": 24.7034912109375,
+   "worst_stream_pct": 2.4427545231534253,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.03/final.pt"
+  },
+  {
+   "beta": 0.075,
+   "lambda255": 4876.875,
+   "step": 50000,
+   "valid_bpp": 1.9232032001018524,
+   "valid_psnr": 35.28788185119629,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.3959418402777777,
+   "gap_q_pct": 0.04182820154658788,
+   "gap_pct": 0.6873219043479247,
+   "y_oor_pct": 0.00027126736767968396,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y_uv",
+   "worst_stream_b": 14.63671875,
+   "worst_stream_pct": 0.062429055052030044,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.075/final.pt"
+  },
+  {
+   "beta": 0.2,
+   "lambda255": 13005.0,
+   "step": 50000,
+   "valid_bpp": 2.557488292455673,
+   "valid_psnr": 36.44602870941162,
+   "valid_set": [
+    "/Users/nizam/JPEC AI/data/div2k/DIV2K_valid_HR"
+   ],
+   "act_bpp": 1.8831922743055556,
+   "gap_q_pct": 0.02162084451545559,
+   "gap_pct": 0.6108060895453691,
+   "y_oor_pct": 0.00027126736767968396,
+   "z_oor_pct": 0.0,
+   "y_exact": true,
+   "streams_ok": true,
+   "worst_stream": "y_uv",
+   "worst_stream_b": 11.2265625,
+   "worst_stream_pct": 0.03304965520952952,
+   "path": "/Users/nizam/JPEC AI/checkpoints/ladder_p6/beta0.2/final.pt"
+  }
+ ],
+ "elapsed_s": 1.0
+}
