@@ -437,13 +437,17 @@ class SplitHyperBranch(nn.Module):
 
         With no gain unit this is `predict()` verbatim, including the `quantise` path,
         so Phase 5's bitstreams are unaffected by this code existing.
+
+        Extra keys from `predict()` are carried through rather than enumerated, because
+        `MCMBranch.predict` returns a `pred` this method has no business knowing about
+        and every business not dropping.
         """
         if self.gain is None:
             return {**self.predict(z_hat, quantise=quantise), "m": None, "offset": None}
         p = self.predict(z_hat, quantise=False)
         offset = self.gain.offset(delta_beta, q_index, quantise=quantise)
         shifted = p["i_sigma"] + offset
-        out = {"means": p["means"], "m": self.gain.scale(offset), "offset": offset}
+        out = {**p, "m": self.gain.scale(offset), "offset": offset}
         if not quantise:
             return {**out, "i_sigma": shifted,
                     "scales": self.sigma_index.sigma(shifted), "rows": None}

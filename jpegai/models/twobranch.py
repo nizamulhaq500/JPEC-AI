@@ -701,7 +701,14 @@ class TwoBranchCodec(nn.Module):
         eq. (14)'s linear fit, a bisection, and a validation -- and all but the
         arithmetic coding is identical across those. Caching is possible only because
         the gain sits *after* the prediction: `z`, `mu` and `Isigma` come off the
-        ungained latent, so `code_cached` re-runs no network at all.
+        ungained latent, so on the split-hyper branch `code_cached` re-runs no network
+        at all.
+
+        With a context model it re-runs one: the coset loop conditions on
+        reconstructions that depend on `m`, so the four context networks are per-Δβ
+        work. `g_a`, `h_a`, the factorised prior, `h_s` and `h_scale` still run once,
+        which is where nearly all the cost is -- the context networks are 1x1 and
+        grouped 3x3 convolutions on a `/32` grid. See `MCMBranch.code_cached`.
 
         Requires the gain unit, because without one there is only one rate point and a
         cache would be an invitation to a stale-tensor bug for no gain.

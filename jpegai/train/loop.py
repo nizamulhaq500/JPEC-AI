@@ -45,9 +45,9 @@ from jpegai.models import KINDS, build_any_model
 from jpegai.models.hyperprior import summarise
 from jpegai.train.dataset import build_loaders
 from jpegai.train.losses import MSE_SCALE, loss_from_config
-from jpegai.train.stages import (STAGE_NAMES, anchor_beta, apply_freeze,
-                                 aux_is_trained, check_partition, find_stage,
-                                 part_parameters, sample_delta_beta, stage_steps)
+from jpegai.train.stages import (STAGE_NAMES, apply_freeze, aux_is_trained,
+                                 check_partition, find_stage, part_parameters,
+                                 resolve_anchor_beta, sample_delta_beta, stage_steps)
 from jpegai.utils import describe_device, pick_device, seed_everything
 
 CHECKPOINT_ROOT = PROJECT_ROOT / "checkpoints"
@@ -567,6 +567,7 @@ def train(args) -> int:
     log_path = out_dir / "log.jsonl"
 
     start = 0
+    ws_beta = None
     if args.warm_start:
         ws = Path(args.warm_start)
         if not ws.is_absolute():
@@ -580,8 +581,14 @@ def train(args) -> int:
         report = model.load_state_dict(blob["model"], strict=False)
         fresh = [k for k in report.missing_keys
                  if "_cdf" not in k and "_offset" not in k]
+        ws_meta = blob.get("meta", {})
+        # The beta this backbone was actually trained at, for eq. (9). See
+        # `resolve_anchor_beta` -- the paper's rule is "the betatrain of the stage with
+        # the greatest number of epochs", and on a bolted-on gain unit that stage
+        # belongs to the checkpoint being loaded, not to this run.
+        ws_beta = ws_meta.get("anchor_beta", ws_meta.get("beta"))
         print(f"warm-start {ws.name} "
-              f"({blob.get('meta', {}).get('model', '?')} @ step "
+              f"({ws_meta.get('model', '?')} @ step "
               f"{blob.get('step', 0):,})")
         print(f"           {len(blob['model']) - len(report.unexpected_keys)} tensors "
               f"loaded, {len(fresh)} initialised fresh"
@@ -609,6 +616,13 @@ def train(args) -> int:
         total = stage_steps(cfg, args.model_id, stage.name, total,
                             sample_delta_beta=not args.no_sample_delta_beta)
 
+    # Resolved once and used twice -- printed below, written into `final.pt`'s meta --
+    # so the number a `runbench --delta-beta` sweep reports cannot disagree with the
+    # number this run announced. `--resume` deliberately does not feed into it: a resumed
+    # run is the same run, and its anchor was fixed when the warm start happened.
+    anchor, anchor_src = resolve_anchor_beta(cfg, args.model_id, ws_beta,
+                                             args.anchor_beta)
+
     print(f"\nrun      {run}")
     print(f"device   {describe_device(device)}")
     print(f"beta     {criterion.beta:g}  (== compressai lambda*255^2 "
@@ -617,10 +631,10 @@ def train(args) -> int:
         print(f"stage    {stage.summary()}")
         if beta_override:
             print(f"         ** --beta {args.beta:g} overrides Table II's "
-                  f"{stage.beta:g} for this stage; the eq. 9 anchor below is the "
-                  f"config's, so a ladder built from it will be offset")
-        print(f"         anchor beta {anchor_beta(cfg, args.model_id):g}  "
-              f"(eq. 9 divides by stage I's beta, not this stage's)")
+                  f"{stage.beta:g} for this stage, and does NOT move the eq. 9 anchor "
+                  f"below, so a ladder built from it will be offset")
+        print(f"         anchor beta {anchor:g} (from {anchor_src})  "
+              f"(eq. 9 divides by the longest stage's beta, not this stage's)")
         n_par = sum(p.numel() for p in trainable)
         n_all = sum(p.numel() for p in model.parameters())
         print(f"         {n_par:,} of {n_all:,} scalars trainable "
@@ -836,7 +850,7 @@ def train(args) -> int:
                     {"tier": args.tier, "model": args.model, "beta": criterion.beta,
                      "valid": v, "rtcheck": rt,
                      **({"stage": stage.name, "model_id": stage.model_id,
-                         "anchor_beta": anchor_beta(cfg, stage.model_id)}
+                         "anchor_beta": anchor, "anchor_beta_from": anchor_src}
                         if stage is not None else {}),
                      **({"dbeta": db} if db else {}),
                      "valid_set": getattr(valid, "roots", None),
@@ -908,8 +922,9 @@ def main(argv=None) -> int:
                          "twobranch-mcm = Phase 6's 4-stage context model "
                          "(-mcm2 / -mcm1 are the stage ablation); twobranch-vr = "
                          "Phase 8's variable-rate codec, split backbone plus a gain "
-                         "unit per branch, which is the kind --stage expects. Use "
-                         "--warm-start to inherit a Phase 5 ladder's weights")
+                         "unit per branch; twobranch-vr-mcm = the same gain unit on "
+                         "the 4-stage context model, which is the kind --stage wants "
+                         "from here. Use --warm-start to inherit a ladder's weights")
     ap.add_argument("--beta", type=float, default=None,
                     help="distortion weight; default config.rate.base_model_beta")
     ap.add_argument("--iterations", type=int, default=None)
@@ -953,6 +968,13 @@ def main(argv=None) -> int:
                          "whose stage IV trains the gain unit alone; models 1-3 "
                          "raise beta for stages III/IV and train the decoder "
                          "alongside the gain unit. Only read when --stage is given")
+    ap.add_argument("--anchor-beta", type=float, default=None, metavar="BETA",
+                    help="override the beta eq. (9) divides by. Normally unnecessary: "
+                         "it is taken from --warm-start's own metadata if present, "
+                         "since a bolted-on gain unit's longest training stage is the "
+                         "checkpoint it inherited, and from config.rate.models "
+                         "otherwise. Needed only for a checkpoint written before that "
+                         "key existed, or to re-anchor deliberately")
     ap.add_argument("--no-sample-delta-beta", action="store_true",
                     help="hold Delta_beta at 0 through stages III/IV instead of "
                          "sampling config.rate.beta_train_sample. This reproduces "

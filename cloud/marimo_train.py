@@ -463,43 +463,60 @@ def _write_variants():
 _write_variants()
 
 # ========================= CELL 6 — launch, detached ==========================
-# LAUNCH EVERYTHING AT ONCE. The first run of this notebook went tier-by-tier, four
-# jobs at a time, on the theory that 4 vCPUs is the ceiling. The monitor board then
-# showed the card at 66% utilisation and 1,543 MiB of 95 GiB in use -- so the ceiling
-# was neither VRAM (each job is ~400 MiB; the card would hold two hundred of them) nor
-# the GPU itself. Holding runs back in a second tier bought nothing and cost the
-# wall clock of a whole extra pass.
+# THIS SESSION'S JOB IS PHASE 8, and it is one chained run rather than a fan-out.
+# Last session's seven jobs are all finished and reported; they are kept below in
+# `DONE` -- not launched -- because the notebook is the only place that records what
+# each of them was FOR, and deleting them would leave the results files unexplained.
 #
-# The arithmetic that matters, all of it measured on this card last time: one job
-# alone runs at 15.88 it/s, four concurrent jobs aggregate to 60.7 it/s (15.2 each),
-# so concurrency inside a tier was already nearly free. Total work here is 700,000
-# steps. Spread over 7 lanes that is ~2 h of card time -- but `ladder_p6_long` is a
-# single indivisible 200,000-step job, so the critical path is 200,000 / ~15 =
-# **~3.7 h whatever else runs beside it**. Every other run therefore belongs in
-# p6_long's shadow, which is what TIER = 0 does.
+# Why a chain and not four parallel lanes. Table II's variable-rate schedule is
+# sequential by construction: stage IV warm-starts from stage III's `final.pt`, so
+# they cannot be two background jobs. `::` in a job's argv separates invocations that
+# run IN ORDER inside one process; the runner splits on it and stops at the first
+# nonzero return code.
 #
-#   ladder_p6_long   200k   the step budget: 4x the steps at one beta. The biggest
-#                           single finding last time (+0.55 dB at matched rate).
-#   ladder_p3f       250k   5 betas x 50k. Single-branch mean-scale, and the only run
-#                           here that carries its own Kodak BD-rate.
-#   ladder_p5_cont    50k   the MCM control: same seed, same steps, no MCM.
-#   sweep_w1/6/24    150k   the luma-weight sweep, on a range wide enough to answer
-#                           (cell 5). w6 doubles as the CUDA-vs-MPS bridge.
-#   (cell 9)          50k   beta 0.0002, which takes the Kodak overlap to 8/11.
+# What stages I and II are here. They already ran: `ladder_p6_long/beta0.012` is
+# 200,000 steps of `twobranch-mcm` at `tier full`, the best checkpoint this project
+# has, and stage III/IV bolt the gain unit onto it. That is exactly Table II stage
+# IV's premise -- a zero gain vector at `Delta_beta = 0` is the bit-exact identity, so
+# the run starts from a codec that already works and learns only the rate coverage.
 #
-# 7 jobs on 4 vCPUs is oversubscribed, and whether that helps or hurts is a question
-# about kernel-launch overhead that is cheaper to MEASURE than to predict: cell 7
-# prints aggregate it/s, so compare it against 60.7 within the first two minutes. If
-# it came out lower, kill `sweep_w1` and `sweep_w24` (the least valuable pair) and the
-# rest speeds back up. Set TIER = 1 or 2 to fall back to the old sequential scheme.
+# The one deviation, recorded: the paper's model 1 trains stages I/II at beta 0.007
+# and we have 0.012. That moves eq. (9)'s anchor, not the schedule, and the loop now
+# reads the anchor out of `--warm-start`'s own metadata rather than the config -- so
+# `final.pt` records `anchor_beta 0.012, from warm start`. Getting this wrong would
+# offset every `jpegai.coder.brm` rate request by +344 in Delta_beta units, silently.
 #
-# NOTHING is at reduced steps. The sweep runs at the same 50,000 as every Mac ladder,
-# so its ranking is a result rather than a hint.
+#   p8_vr_mcm_III     42k   Table II stage III: decoder + entropy + gain, beta 0.03,
+#                           Delta_beta ~ U[-900, 600] per step (OURS -- with JPEG AI's
+#                           single gain vector, a fixed training beta never shows the
+#                           vector a non-zero offset).
+#   p8_vr_mcm_IV      25k   stage IV: decoder + gain, entropy frozen, so the CDF
+#                           tables stop moving while the vector finishes.
+#
+# The step split is Table II's own 20:12 applied to the 200,000 the backbone got for
+# its 64+32: one epoch-unit is 200000/96 = 2083 steps, so III is 20 x 2083 = 41,667
+# (42,000) and IV is 12 x 2083 = 25,000. 67,000 steps at last session's measured
+# 15.88 it/s alone is **~1.2 h of card time**, which is the cheapest phase in the plan.
+#
+# `--iterations` on a STAGED run is that stage's own budget, not a whole-schedule budget
+# to be apportioned (`loop.py:611` -- the 64:32:20:12 share is only applied when the flag
+# is absent). So these two numbers are 42,000 and 25,000 steps, not shares of them.
+#
+# Acceptance, both checked by the loop's own gate at the end of each stage and printed
+# in the log -- read them there rather than waiting for a bench run:
+#   * `beta_exact True` at all nine Delta_beta points. On this model kind that is the
+#     load-bearing one: the gain has to be applied INSIDE the coset loop, because MCM
+#     stage k conditions on the reconstructions of stages < k. Scaling the assembled
+#     field instead leaves the rate monotone and the offset neutral while the decoder
+#     drifts, so nothing but bit-exactness catches it.
+#   * `beta_span` > 10 is the phase's headline acceptance test (one checkpoint, a
+#     tenfold rate range). An untrained vector already reaches 4.5x, so this is the
+#     number stage III/IV exist to move.
 #
 # Relaunching is safe: a job whose log already exists is skipped, which is what keeps
-# marimo's automatic re-execution from starting a second copy of a 200,000-step run.
+# marimo's automatic re-execution from starting a second copy of a long run.
 
-TIER = 0      # 0 = everything concurrently (recommended); 1 or 2 = that tier only
+TIER = 0      # 0 = every tier; a nonzero value launches that tier alone
 
 # --iterations is on EVERY job on purpose: the config defaults are 600,000 (full) and
 # 400,000 (tierA), so a missing flag is a twelvefold overrun rather than a typo.
@@ -508,69 +525,83 @@ COMMON = ("--batch 8 --workers 0 --device cuda --colour-space ycbcr "
 
 SEED = "--warm-start-from checkpoints/ladder_p5"
 
-TIERS = {
-    # The two groups below are no longer a schedule -- TIER = 0 launches all of them
-    # together. They are kept as GROUPS because the split still records something
-    # true: group 1 is the runs that share a warm start and a beta, group 2 is the
-    # two that stand alone. Set TIER = 1 or 2 to get the old sequential behaviour.
-    #
-    # ---- 1: the budget probe and the weight sweep, all at full steps -----------
-    # Longest job first, so p6_long's 200,000 steps start before anything else
-    # competes for the card.
-    1: {
-        # 26.1's confound in its cheapest decisive form: 4x the steps at ONE beta,
-        # same architecture, and the same seed weights ladder_p6/beta0.012 started
-        # from -- so the only difference left is the budget. Until this runs, phase
-        # 6's +0.60 dB is an upper bound. Needs cell 2b; see REQUIRE_SEED.
-        "ladder_p6_long": f"--model twobranch-mcm --tier full --name ladder_p6_long "
-                          f"--betas 0.012 --iterations 200000 {SEED}",
+#: Phase 8's backbone: 200,000 steps of `twobranch-mcm` at `tier full`, beta 0.012.
+#: A file, not a directory, because this goes to `loop --warm-start` rather than to
+#: `runladder --warm-start-from` -- a staged run is one model, not a beta ladder.
+P8_SEED = "checkpoints/ladder_p6_long/beta0.012/final.pt"
 
-        # distortion_weights is OURS, not normative (report 26.3), and the cheapest
-        # untested hypothesis for the luma deficit -- Kodak has psnr_y at +6.4% while
-        # psnr_u is -60.5%. Three runs sharing config seed 1234 and differing in
-        # exactly one key, so the ranking is clean with or without the warm start.
-        # The span is 1:1:1 to 24:1:1 this time, not 4 to 8: see cell 5 for why the
-        # narrow version could only ever come back null.
-        # sweep_w6 is the 6:1:1 control AND, with the seed present, a step-for-step
-        # rerun of ladder_p6/beta0.012 on CUDA -- i.e. the hardware bridge.
-        "sweep_w6": f"--model twobranch-mcm --tier full     --name sweep_w6 "
-                    f"--betas 0.012 --iterations 50000 {SEED}",
-        "sweep_w1": f"--model twobranch-mcm --tier full_w1  --name sweep_w1 "
-                    f"--betas 0.012 --iterations 50000 {SEED}",
-        "sweep_w24": f"--model twobranch-mcm --tier full_w24 --name sweep_w24 "
-                     f"--betas 0.012 --iterations 50000 {SEED}",
-    },
-    # ---- 2: the MCM attribution control, and phase 3 at full width -------------
-    # ladder_p5_cont is the sharpest single result available for 50,000 steps.
-    # ladder_p6/beta0.012 IS ladder_p5/beta0.012 plus 50,000 steps plus the MCM. Run
-    # the same 50,000 steps from the same weights WITHOUT the MCM and the difference
-    # is the MCM alone -- which turns phase 6's +0.60 dB from an upper bound into an
-    # attributed number. Same REQUIRE_SEED logic: cold it measures nothing.
-    #
-    # ladder_p3f separates "the phase 3 architecture" from "the tier width". Default 5
-    # betas and the default intra-ladder warm start, because that is exactly how
-    # ladders #0 and #1 were run (logs/ladder.log, logs/ladder_p5.log) and the ladder
-    # -- not the rate point -- is the unit of comparison. No SEED: mean-scale cannot
-    # usefully load twobranch weights, and #0/#1 started cold too. 250,000 steps
-    # total, so it is the expensive job here, and the only one that carries its own
-    # BD-rate. Last time it also came back with `exact False` at beta 0.03 -- watch
-    # that row on cell 7's board rather than discovering it at bench time.
-    2: {
-        "ladder_p5_cont": f"--model twobranch-split --tier full --name ladder_p5_cont "
-                          f"--betas 0.012 --iterations 50000 {SEED}",
-        "ladder_p3f": "--model mean-scale --tier full --name ladder_p3f "
-                      "--iterations 50000",
+#: Where stage III leaves its weights, and therefore what stage IV loads. Written out
+#: rather than derived so the chain reads as two commands a human could type.
+P8_III = "checkpoints/p8_vr_mcm_III/final.pt"
+
+TIERS = {
+    # ---- 1: Phase 8, Table II stages III and IV, chained ------------------------
+    # `::` runs the two in order in one process. See the cell header for the step
+    # split, the beta 0.012-vs-0.007 anchor deviation, and what to read in the log.
+    1: {
+        "p8_vr_mcm": (
+            f"--model twobranch-vr-mcm --tier full --name p8_vr_mcm_III "
+            f"--stage III --model-id 1 --iterations 42000 --warm-start {P8_SEED}"
+            f" :: "
+            f"--model twobranch-vr-mcm --tier full --name p8_vr_mcm_IV "
+            f"--stage IV --model-id 1 --iterations 25000 --warm-start {P8_III}"),
     },
 }
 
-# A job that measures a BUDGET or a MODULE difference must not also carry an
-# INITIALISATION difference, so these refuse to start cold rather than produce a
-# number nothing can be compared against.
-REQUIRE_SEED = {"ladder_p6_long", "ladder_p5_cont"}
+#: Finished, reported, and kept for the record rather than launched. Each line is the
+#: job that produced a results file, so a reader who finds `results/p6_200k_3way.*`
+#: can see what the run behind it was and what it was controlling for. Move an entry
+#: back into TIERS to re-run it.
+DONE = {
+    # The budget probe: 4x the steps at ONE beta, same architecture and the same seed
+    # weights ladder_p6/beta0.012 started from, so the only difference left is the
+    # budget. Answered +0.90 dB at matched rate -- the largest single finding so far,
+    # and the reason the plan now puts budget above architecture.
+    "ladder_p6_long": f"--model twobranch-mcm --tier full --name ladder_p6_long "
+                      f"--betas 0.012 --iterations 200000 {SEED}",
+    # The MCM attribution controls. ladder_p6/beta0.012 IS ladder_p5/beta0.012 plus
+    # 50,000 steps plus the MCM, so the +0.60 dB it was credited with was confounded.
+    # These two ran the same 200,000 steps at the same seed with no MCM and with one
+    # stage, which turned that number into 1.8% rate for the 4-stage model and nothing
+    # at all for the 1-stage one. results/p6_200k_3way.*
+    "ladder_p5_cont200": f"--model twobranch-split --tier full "
+                         f"--name ladder_p5_cont200 --betas 0.012 "
+                         f"--iterations 200000 {SEED}",
+    "ladder_p6a_mcm1_200": f"--model twobranch-mcm1 --tier full "
+                           f"--name ladder_p6a_mcm1_200 --betas 0.012 "
+                           f"--iterations 200000 {SEED}",
+    # Phase 3's architecture at full width, separating "the phase 3 design" from "the
+    # tier A latent width". The only run here carrying its own Kodak BD-rate.
+    # results/p3f_kodak.*
+    "ladder_p3f": "--model mean-scale --tier full --name ladder_p3f "
+                  "--iterations 50000",
+    # The luma-weight sweep, 1:1:1 to 24:1:1, on the hypothesis that
+    # `train.distortion_weights` (OURS, not normative) explains the psnr_y deficit.
+    # sweep_w6 doubles as the CUDA-vs-MPS bridge: with the seed present it is a
+    # step-for-step rerun of ladder_p6/beta0.012 on the other device.
+    "sweep_w6": f"--model twobranch-mcm --tier full     --name sweep_w6 "
+                f"--betas 0.012 --iterations 50000 {SEED}",
+    "sweep_w1": f"--model twobranch-mcm --tier full_w1  --name sweep_w1 "
+                f"--betas 0.012 --iterations 50000 {SEED}",
+    "sweep_w24": f"--model twobranch-mcm --tier full_w24 --name sweep_w24 "
+                 f"--betas 0.012 --iterations 50000 {SEED}",
+}
 
-# Every job, in tier order, which is also longest-first -- so the 200,000-step
-# critical path starts before anything queues behind it. TIER = 0 launches all of
-# them; a nonzero TIER keeps the old sequential behaviour for when the card is shared.
+# `{job: the file it must warm-start from}`. A job that measures a BUDGET, a MODULE or
+# a RATE-COVERAGE difference must not also carry an INITIALISATION difference, so these
+# refuse to start cold rather than produce a number nothing can be compared against.
+# Per-job paths, not one shared seed: Phase 8 inherits ladder_p6_long, last session's
+# runs inherited ladder_p5, and a single `have_seed` flag checked the wrong file for
+# whichever of the two was not the current work.
+REQUIRE_SEED = {
+    "p8_vr_mcm": P8_SEED,
+    "ladder_p6_long": "checkpoints/ladder_p5/beta0.012/final.pt",
+    "ladder_p5_cont200": "checkpoints/ladder_p5/beta0.012/final.pt",
+    "ladder_p6a_mcm1_200": "checkpoints/ladder_p5/beta0.012/final.pt",
+}
+
+# Every job, in tier order. TIER = 0 launches all of them; a nonzero TIER launches that
+# tier alone, for when the card is shared.
 JOBS = {k: v for t in sorted(TIERS) for k, v in TIERS[t].items()}
 
 
@@ -591,22 +622,54 @@ def _launch():
         "# deliberately NOT enabled: a 10-bit mantissa underneath an entropy model is\n"
         "# not worth the doubt, and fp32 is what the three Mac ladders ran.\n"
         "torch.backends.cudnn.benchmark = True\n"
-        "from jpegai.train.runladder import main\n"
-        "sys.exit(main(sys.argv[1:]))\n")
+        "from jpegai.train.loop import main as loop_main\n"
+        "from jpegai.train.runladder import main as ladder_main\n"
+        "\n"
+        "# `::` separates invocations that run IN ORDER in this one process, stopping\n"
+        "# at the first nonzero code. Table II needs it: stage IV warm-starts from\n"
+        "# stage III's final.pt, so the two cannot be two background jobs.\n"
+        "argv, runs = sys.argv[1:], []\n"
+        "while '::' in argv:\n"
+        "    i = argv.index('::')\n"
+        "    runs.append(argv[:i])\n"
+        "    argv = argv[i + 1:]\n"
+        "runs.append(argv)\n"
+        "\n"
+        "for i, one in enumerate(runs, 1):\n"
+        "    if len(runs) > 1:\n"
+        "        print(f'=== chained run {i}/{len(runs)} ===', flush=True)\n"
+        "    # Dispatch on --stage, not on the model kind: a staged run is one model\n"
+        "    # following Table II and goes through the loop; anything else is a beta\n"
+        "    # ladder, which is runladder's whole job.\n"
+        "    rc = (loop_main if '--stage' in one else ladder_main)(one)\n"
+        "    if rc:\n"
+        "        sys.exit(rc)\n"
+        "sys.exit(0)\n")
 
     want = JOBS if TIER == 0 else TIERS[TIER]
-    have_seed = (ROOT / "checkpoints/ladder_p5/beta0.012/final.pt").exists()
 
     def _steps(a):
-        """GPU-steps a job will actually run: --iterations is PER rate point."""
-        n = (len(a.split("--betas")[1].split()[0].split(","))
-             if "--betas" in a else 5)      # no --betas = runladder's default grid
-        return int(a.split("--iterations")[1].split()[0]) * n
+        """GPU-steps a job will actually run.
+
+        Per chain segment, and `--betas` is only multiplied through on the ladder
+        entrypoint: `--iterations` is PER RATE POINT there and the whole budget on a
+        staged run. Reading a staged job with the old rule -- "no --betas means
+        runladder's default 5-point grid" -- would have reported five times the work.
+        """
+        total = 0
+        for seg in a.split("::"):
+            if "--iterations" not in seg:
+                continue
+            n = int(seg.split("--iterations")[1].split()[0])
+            if "--stage" not in seg:
+                n *= (len(seg.split("--betas")[1].split()[0].split(","))
+                      if "--betas" in seg else 5)
+            total += n
+        return total
 
     total = sum(_steps(a) for a in want.values())
-    print(f"{'all tiers' if TIER == 0 else f'tier {TIER}'}: launching {len(want)} job(s), "
-          f"{total:,} GPU-steps, seed "
-          f"{'present' if have_seed else 'MISSING (see cell 2b)'}\n")
+    print(f"{'all tiers' if TIER == 0 else f'tier {TIER}'}: launching "
+          f"{len(want)} job(s), {total:,} GPU-steps\n")
 
     # 4 vCPUs against 4 torch processes that each default to 4 OMP threads is 16
     # threads on 4 cores. Pinning to 1 is worth more here than anything else.
@@ -619,18 +682,25 @@ def _launch():
     env = "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONUNBUFFERED=1"
 
     for name, args in want.items():
-        if name in REQUIRE_SEED and not have_seed:
-            print(f"{name:16s} SKIPPED -- needs "
-                  f"checkpoints/ladder_p5/beta0.012/final.pt. Cold it would\n"
-                  f"{'':17s} measure budget and initialisation together, which is "
-                  f"the one thing it exists to avoid.")
+        seed = REQUIRE_SEED.get(name)
+        if seed is not None and not (ROOT / seed).exists():
+            print(f"{name:16s} SKIPPED -- needs {seed}\n"
+                  f"{'':17s} Cold it would measure initialisation alongside the "
+                  f"thing it exists\n"
+                  f"{'':17s} to measure, which is the one confound no later "
+                  f"analysis can undo.\n"
+                  f"{'':17s} See cell 2b.")
             continue
         log = logs / f"cloud_{name}.log"
         if log.exists():
             print(f"{name:16s} log exists, not relaunching "
                   f"(delete {log.name} to force)")
             continue
-        argv = " ".join(args.split()) + " " + COMMON
+        # COMMON goes on EVERY segment, not just the last: `" ".join(args.split())`
+        # flattens the whole chain, so appending once would leave stage III on the
+        # config's 600,000-step default.
+        argv = " :: ".join(" ".join(seg.split()) + " " + COMMON
+                           for seg in args.split("::"))
         cmd = (f"setsid env {env} nohup {sys.executable} {runner.name} {argv} "
                f"> {log} 2>&1 &")
         subprocess.Popen(cmd, shell=True, cwd=ROOT)

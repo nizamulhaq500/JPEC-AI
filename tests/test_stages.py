@@ -35,7 +35,10 @@ from jpegai.train.stages import (ALIASES, LOSSES, PARTS, STAGE_NAMES, Stage,
 
 KINDS_UNDER_TEST = ("scale", "mean-scale", "twobranch", "twobranch-split",
                     "twobranch-fused", "twobranch-mcm", "twobranch-mcm1",
-                    "twobranch-vr")
+                    "twobranch-vr", "twobranch-vr-mcm")
+
+#: The kinds with a gain unit, so the staged schedule has a stage IV to run.
+VR_KINDS = ("twobranch-vr", "twobranch-vr-mcm")
 
 
 @pytest.fixture(scope="module")
@@ -131,8 +134,8 @@ def test_gain_bucket_present_and_empty_without_a_gain_unit(models, kind):
     """
     mods = part_modules(models[kind])
     assert "gain" in mods
-    assert bool(mods["gain"]) == (kind == "twobranch-vr")
-    if kind == "twobranch-vr":
+    assert bool(mods["gain"]) == (kind in VR_KINDS)
+    if kind in VR_KINDS:
         # One vector per branch, and JPEG AI's simplification is that it is *one*
         # vector, not the reference software's 18-entry interpolated table.
         assert len(mods["gain"]) == 2
@@ -162,9 +165,17 @@ def test_mcm_lands_in_entropy(models):
     Worth its own assertion because MCM sits between the hyper decoder and the coder
     and could plausibly have been filed under either -- and stage III trains entropy,
     so the choice is load-bearing.
+
+    Checked on `twobranch-vr-mcm` as well, because that is the kind a Phase 8 run
+    trains: it has both an `mcm` and a `gain` submodule, and the one arrangement that
+    would pass on `twobranch-mcm` and fail here is a `training_parts` that files the
+    context model under `gain` because both were added by the same phase.
     """
-    labels = {lab for lab, _ in part_modules(models["twobranch-mcm"])["entropy"]}
-    assert "mcm_y" in labels
+    for kind in ("twobranch-mcm", "twobranch-vr-mcm"):
+        labels = {lab for lab, _ in part_modules(models[kind])["entropy"]}
+        assert "mcm_y" in labels, kind
+    gain = {lab for lab, _ in part_modules(models["twobranch-vr-mcm"])["gain"]}
+    assert gain == {"gain_y", "gain_uv"}
 
 
 @pytest.mark.parametrize("kind", KINDS_UNDER_TEST)
@@ -271,6 +282,31 @@ def test_anchor_is_stage_ones_beta(cfg, grid):
                               clip=False, **grid)
     assert wrong > DELTA_BETA_MAX
     assert wrong == 929          # the number quoted in `anchor_beta`'s docstring
+
+
+def test_the_anchor_follows_the_warm_start_when_there_is_one(cfg, grid):
+    """A bolted-on gain unit inherits its anchor from the backbone, not the config.
+
+    Same rule as the test above, applied to how this project actually runs Phase 8.
+    Stages I and II here are a 200,000-step fixed-rate ladder point at beta 0.012;
+    stages III and IV are 100,000 more on top of it. The paper picks the beta of the
+    stage with the most epochs, which is the inherited one -- so `--warm-start`'s
+    recorded beta wins over `config.rate.models[1].beta_train`.
+
+    The failure this pins is silent and sized: recording 0.007 for a 0.012 backbone
+    offsets every rate request `jpegai.coder.brm` makes by +344, a fifth of the usable
+    `[-1069, 702]` range, and nothing downstream would flag it.
+    """
+    from jpegai.models.gain import beta_displacement
+    from jpegai.train.stages import resolve_anchor_beta
+
+    assert resolve_anchor_beta(cfg, 1, None, None) == (pytest.approx(0.007), "config")
+    assert resolve_anchor_beta(cfg, 1, 0.012, None) == (pytest.approx(0.012),
+                                                        "warm start")
+    # The override beats both, and beats them even when a warm start is present.
+    assert resolve_anchor_beta(cfg, 1, 0.012, 0.03) == (pytest.approx(0.03),
+                                                        "--anchor-beta")
+    assert beta_displacement(0.012, 0.007, clip=False, **grid) == 344
 
 
 def test_model_entry_is_by_id_not_position(cfg):
@@ -459,8 +495,9 @@ def test_zero_gain_is_byte_identical(cfg):
     assert torch.equal(ya, yb)
 
 
+@pytest.mark.parametrize("kind", VR_KINDS)
 @torch.no_grad()
-def test_delta_beta_moves_the_rate_monotonically(cfg):
+def test_delta_beta_moves_the_rate_monotonically(cfg, kind):
     """The loop's gate, run here so `pytest` covers it without a training run.
 
     Monotone, not strictly increasing: `R(Delta_beta)` is a step function whose
@@ -468,10 +505,16 @@ def test_delta_beta_moves_the_rate_monotonically(cfg):
     model), so adjacent probes legitimately return identical rates. A *decrease* is the
     real fault -- it means a sign-flipped or saturated gain vector, and it would break
     the bisection in `jpegai.coder.brm`, whose only precondition is monotonicity.
+
+    Run on `twobranch-vr-mcm` too, because that is the kind a Phase 8 run trains and it
+    is the one where `beta_exact` can fail for a reason arithmetic cannot catch: the
+    gain has to be applied *inside* the coset loop, since stage `k` conditions on the
+    reconstructions of stages `< k`. Scaling the assembled field instead would leave
+    this gate's rate monotone and its offset neutral while the decoder drifted.
     """
     from jpegai.train.loop import delta_beta_check
 
-    model = build_any_model(cfg, "twobranch-vr")
+    model = build_any_model(cfg, kind)
     valid = [torch.rand(3, 128, 128) for _ in range(1)]
     db = delta_beta_check(model, valid, torch.device("cpu"),
                           points=cfg.rate.beta_eval_points)

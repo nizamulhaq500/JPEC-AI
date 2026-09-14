@@ -109,7 +109,7 @@ stays a documented choice rather than a gap.
 | **P4** | two-branch YCbCr, separate luma / chroma latents | `results/p3f_kodak.*` separates architecture from width |
 | **P5** | residual coding, split hyper decoders, integer σ index | one-ULP hazard pinned; see docs/00 |
 | **P6** | 4-stage MCM, coset order from the WG1 reference software | built and complexity-verified — **worth 1.8% rate, not the +0.60 dB first claimed; see below** |
-| **P8** | gain unit (eqs 11–15), 3D quality map / RoI, bit-rate matching, the 4-stage schedule, Δβ sweep through `runbench` | code path verified end to end on a smoke checkpoint; **no trained weights yet** |
+| **P8** | gain unit (eqs 11–15), 3D quality map / RoI, bit-rate matching, the 4-stage schedule, Δβ sweep through `runbench` | code path verified end to end on a smoke checkpoint, including `twobranch-vr-mcm` (gain × 4-stage MCM); **no trained weights yet** |
 
 ### The three measurements that set the new order
 
@@ -132,9 +132,10 @@ stays a documented choice rather than a gap.
    So the 4-stage MCM earns **1.8% rate**, a 1-stage MCM earns nothing, and the +0.60 dB
    originally attributed to Phase 6 was the extra 50,000 steps. Two lessons, both cheap to
    apply from here: **build the control before crediting a phase**, and the stage count is the
-   contribution — not the existence of a context model. At the 50,000-step budget the whole
-   three-way spread is inside 0.07 dB, so this tool needs budget before it appears at all,
-   which is consistent with the paper measuring it at convergence.
+   contribution — not the existence of a context model. At the 50,000-step budget the tool is
+   invisible: on Kodak, 1-stage and 4-stage land on 32.690 dB / 0.9194 bpp and
+   32.687 dB / 0.9191 bpp (`results/bench_all.json`), so it needs budget before it appears at
+   all, which is consistent with the paper measuring it at convergence.
 3. **The losing metrics are the ones Phase 10 exists to fix.** On Kodak this codec loses only
    VMAF (+4.6%) and PSNR-HVS (+11.3%) against JPEG, and against VVC those two are its worst
    columns (+79.2%, +80.9%). The paper puts RVS's gain in **FSIM (6.7 pp) and VMAF (6.1 pp)**
@@ -144,10 +145,32 @@ stays a documented choice rather than a gap.
 ### The order
 
 **1. Train the Phase 8 variable-rate checkpoint.** Stage III/IV of the Table II schedule, on
-a rented GPU. This is first because it is blocked on nothing but compute, and it unblocks two
-of Phase 8's four acceptance tests (the ≥10× span from one model, and the variable-rate
-BD-rate penalty that the paper does not publish). It also makes the RoI demo possible, which
-Phase 14 wants.
+a rented GPU, as `--model twobranch-vr-mcm` warm-started from
+`checkpoints/ladder_p6_long/beta0.012/final.pt`. This is first because it is blocked on
+nothing but compute, and it unblocks two of Phase 8's four acceptance tests (the ≥10× span
+from one model, and the variable-rate BD-rate penalty that the paper does not publish). It
+also makes the RoI demo possible, which Phase 14 wants.
+
+The seed is the **200,000-step** run, not the 50,000-step `ladder_p6/beta0.012` — 0.9821 bpp
+at 33.233 dB against 0.9628 at 32.586. Stage III trains a backbone that is already converged
+rather than one still moving, so what stage IV's 144 gain parameters then have to hold across
+the clamp is a rate curve and not also a half-trained encoder. It has a second consequence,
+which cell 6 of `cloud/marimo_train.py` and `train.stages.resolve_anchor_beta` both exist to
+handle: eq. (9)'s anchor is the β of the stage with the most epochs, so it is that run's
+**0.012**, not the 0.007 in `config.rate.models[1]`. Recording the config value would offset
+every bit-rate-matching request by `beta_displacement(0.012, 0.007) = +344` Δβ units.
+
+The kind matters. `twobranch-vr` is the gain unit on the split-hyper backbone — the shape the
+first eleven Phase 8 checkpoints were trained against, kept because `meta["model"]` is on-disk
+format. `twobranch-vr-mcm` is the gain unit *and* the 4-stage context model, which is what a
+run from here should use: the two savings are independent, because the context model refines
+the mean `p̈` while the gain scales the residual around it and shifts `Iσ`, and `Iσ` is not
+context modelled. Training `twobranch-vr` instead would forfeit measurement 2's 1.8% — on the
+luma branch, which is where the whole deficit against VVC sits.
+
+Both stages are one job: `cloud/marimo_train.py`'s tier 1 chains them with a `::` separator,
+42,000 steps of stage III then 25,000 of stage IV warm-started from stage III's `final.pt`.
+They cannot be two parallel lanes — Table II's schedule is sequential by construction.
 
 **2. Phase 10 — RVS, LSBS, and the four post-filters.** Reason 3 above. Build order within
 the phase: RVS first and alone (2.2 pp of the paper's 20.2 at zero MAC cost, and the tables

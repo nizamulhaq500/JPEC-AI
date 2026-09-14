@@ -397,7 +397,7 @@ class VariableRateCodec(NeuralCodec):
             raise ValueError(
                 f"{self._paths[self.LABEL]} is not a variable-rate checkpoint "
                 f"(no gain unit), so Delta_beta has nothing to act on. Train one with "
-                f"--model twobranch-vr --stage IV, or drop --delta-beta to measure "
+                f"--model twobranch-vr-mcm --stage IV, or drop --delta-beta to measure "
                 f"this as an ordinary rate ladder")
 
 

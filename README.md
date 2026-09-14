@@ -27,7 +27,7 @@ the remaining phases get finished, which are cut, and why.
 | **Phase 10** | RVS, LSBS, the four post-filters | next |
 | **Phases 13–14** | ablation table, encoder/decoder CLI, demo, report | the deliverable |
 
-Verification: **498 pytest tests**, **210 self-test checks** (215 with a checkpoint), 7/7 of
+Verification: **505 pytest tests**, **210 self-test checks** (215 with a checkpoint), 7/7 of
 the paper's metrics live, and the coder gated to ±0.5% against its own entropy model at
 every rate point.
 
@@ -114,7 +114,8 @@ design choice is the part that pays; a context model as such is not. Single-β r
 produce a BD-rate, which is why the `+nan%` rows in
 [`results/p6_200k_3way.md`](results/p6_200k_3way.md) are correct and why this is reported at
 matched quality instead. At the shorter 50,000-step budget the tool is invisible: 1-stage and
-4-stage land on 32.690 and 32.687 dB at the same 0.917 bpp, indistinguishable. This tool needs
+4-stage land on 32.690 and 32.687 dB at 0.9194 and 0.9191 bpp
+([`results/bench_all.json`](results/bench_all.json)), indistinguishable. This tool needs
 budget before it shows up at all.
 
 **BD-rate was wrong by up to 72 points**, from a global cubic fit that is invalid on metrics
@@ -210,7 +211,7 @@ cloud/           the marimo notebook that drives a rented GPU box
 cloud_results/   logs and ladder.json from those runs — the provenance of the numbers above
 docs/            the written study and the runbook
 results/         benchmark JSON, markdown and plots, all regenerable without re-encoding
-tests/           498 tests
+tests/           505 tests
 tools/           scan_per_image.py — median/MAD outlier scan that catches entropy-coder desyncs
 ```
 

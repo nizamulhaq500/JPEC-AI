@@ -340,6 +340,38 @@ def anchor_beta(config, model_id: int) -> float:
     return float(model_entry(config, model_id)["beta_train"])
 
 
+def resolve_anchor_beta(config, model_id: int, warm_start_beta=None,
+                        override=None) -> tuple[float, str]:
+    """The anchor eq. (9) should actually divide by, and where it came from.
+
+    Returns `(beta, source)` with `source` in `{"--anchor-beta", "warm start",
+    "config"}`, so the run can print which of the three it used instead of leaving a
+    reader to infer it from a bare number.
+
+    `anchor_beta` above answers "what does Table II say for model *n*", which is the
+    right answer when the whole four-stage schedule runs as written. This project's
+    Phase 8 run does not: stages I and II already happened, as a 200,000-step fixed-rate
+    ladder point, and stages III/IV bolt the gain unit onto it for 100,000 more. The
+    paper's rule picks the beta of "the stage with the greatest number of epochs", and
+    on that run the longest stage by a factor of two is the checkpoint being warm
+    started from -- so its recorded beta wins over the config's stage I value.
+
+    This matters because the anchor is not decorative. It is what `jpegai.coder.brm`
+    divides by to turn a target rate into a `Delta_beta`, and what `runbench` prints
+    beside a variable-rate ladder. Warm starting a `beta_train: 0.007` model entry from
+    a 0.012 checkpoint and recording 0.007 would put every rate request off by
+    `beta_displacement(0.012, 0.007) = +344` -- a quarter of the usable range, silently.
+
+    `override` is the escape hatch for the case neither rule covers: a checkpoint
+    written before the metadata key existed, or a deliberate re-anchoring.
+    """
+    if override is not None:
+        return float(override), "--anchor-beta"
+    if warm_start_beta is not None:
+        return float(warm_start_beta), "warm start"
+    return anchor_beta(config, model_id), "config"
+
+
 def schedule(config, model_id: int = 0, *,
              sample_delta_beta: bool = True) -> tuple[Stage, ...]:
     """Table II's four rows for one model.

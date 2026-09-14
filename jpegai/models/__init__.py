@@ -14,7 +14,8 @@ are treated as part of the on-disk format.
 from __future__ import annotations
 
 KINDS = ("scale", "mean-scale", "twobranch", "twobranch-split", "twobranch-fused",
-         "twobranch-mcm", "twobranch-mcm2", "twobranch-mcm1", "twobranch-vr")
+         "twobranch-mcm", "twobranch-mcm2", "twobranch-mcm1", "twobranch-vr",
+         "twobranch-vr-mcm")
 
 #: Phase 6's default. `twobranch` and `twobranch-split` stay what they were so
 #: Phase 4's and Phase 5's checkpoints keep reconstructing the architecture they were
@@ -45,19 +46,26 @@ def build_any_model(config, kind: str = "scale"):
       which is what makes it the right zero point to measure MCM's gain against.
     * `twobranch-vr` -- Phase 8's variable-rate codec: `twobranch-split` plus a gain
       unit per branch, so one checkpoint covers the whole rate ladder through
-      `Delta_beta` (§III-A1). It is built on the *split* backbone rather than on
-      `twobranch-mcm` because `MCMBranch` quantises inside its coset loop, so the gain
-      would have to be applied there and the quality map coset-split alongside the
-      latent; until that is done, `gain=True, mcm=True` raises rather than silently
-      dropping the rate request. A `twobranch-vr` run therefore warm-starts from a
-      Phase 5 ladder, not a Phase 6 one, and gives up MCM's rate saving in exchange
-      for variable rate. Combining them is what makes the two savings additive, and
-      is the one piece of Phase 8 that is not here yet.
+      `Delta_beta` (§III-A1). Kept as its own kind because eleven checkpoints were
+      trained against it and `meta["model"]` is on-disk format.
+    * `twobranch-vr-mcm` -- both at once: the 4-stage context model *and* the gain
+      unit. The two savings are independent, because they touch different halves of
+      the same equation -- the context model refines the mean `p̈`, the gain unit
+      scales the residual around it and shifts `Iσ` by the matching offset, and `Iσ`
+      is not context modelled. The one thing that is not free is the ordering: the
+      gain has to be applied *inside* the coset loop, since stage `k` conditions on
+      the reconstructions of stages `< k` and those depend on `m`. See
+      `MultiStageContextModel.reconstruct`. This is the kind a Phase 8 run should use
+      from here; `twobranch-vr` remains for reproducing the split-hyper baseline.
     """
     if kind == "twobranch-vr":
         from jpegai.models.twobranch import build_two_branch
         return build_two_branch(config, mean_scale=True, split_hyper=True,
                                 mcm=False, gain=True)
+    if kind == "twobranch-vr-mcm":
+        from jpegai.models.twobranch import build_two_branch
+        return build_two_branch(config, mean_scale=True, split_hyper=True,
+                                mcm=True, mcm_stages=4, gain=True)
     if kind in MCM_STAGES:
         from jpegai.models.twobranch import build_two_branch
         return build_two_branch(config, mean_scale=True, split_hyper=True,

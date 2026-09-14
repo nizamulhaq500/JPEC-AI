@@ -63,6 +63,17 @@ def _unit(channels=8):
     return GainUnit(channels, log_k=si.log_k, step=si.step), si
 
 
+def _strings(packet) -> tuple:
+    """Just the coded streams, so two packets can be compared without their headers.
+
+    A gained packet carries a picture header a Phase 5/6 one does not, so comparing
+    whole packets would report a difference that is *supposed* to be there and hide
+    the one that is not.
+    """
+    return tuple(packet[part][key] for part in ("luma", "chroma")
+                 for key in ("y_strings", "z_strings"))
+
+
 # ---------------------------------------------------------------------------
 # eq. (10): Δβ is ln δβ in units of the σ index
 # ---------------------------------------------------------------------------
@@ -434,7 +445,7 @@ def test_the_quality_map_is_carried_as_residuals_and_costs_header_bytes():
     q = torch.randint(Q_INDEX_MIN, Q_INDEX_MAX + 1, (1, 1, 4, 4))
     packet = m.compress(x, q_index=q)
     assert torch.equal(spatial_reconstruct(packet["q_residual"]), q)
-    assert m.header_bytes(packet) > 3                      # 3 for Δβ, rest is the map
+    assert m.header_bytes(packet) > 3            # 3 for Δβ, rest is the map
     assert m.header_bytes(m.compress(x)) == 3
     sb = m.stream_bytes(packet)
     assert sb["header"] == m.header_bytes(packet)
@@ -464,18 +475,87 @@ def test_gain_needs_the_split_hyper_path():
         _codec(gain=True, split_hyper=False)
 
 
-def test_the_context_model_branch_refuses_a_rate_request_rather_than_dropping_it():
-    """MCM quantises inside its coset loop, so the gain has to be applied there and
-    the map coset-split alongside the latent. Half-implementing it would put the two
-    ends on different reconstructions; accepting and ignoring Δβ would produce a
-    ladder with two identical points and no error at all."""
-    with pytest.raises(NotImplementedError, match="mcm: false"):
-        _codec(gain=True, mcm=True)
+def test_the_gain_unit_composes_with_the_context_model():
+    """The two Phase 6 / Phase 8 mechanisms touch different halves of one equation.
+
+    MCM refines the mean `p̈`; the gain scales the residual around it and shifts `Iσ`
+    by the matching offset. So a gained MCM codec must satisfy *both* phases'
+    invariants at once, and the way to get this wrong is to apply `m` to the assembled
+    field instead of coset by coset — every stage after the first would then condition
+    on a latent the decoder never sees, and the failure is a slow drift on a
+    bitstream that decodes without complaint.
+    """
     torch.manual_seed(0)
-    m = _codec(gain=False, mcm=True)
-    with pytest.raises(NotImplementedError, match="MCMBranch"):
-        m(torch.rand(1, 3, 64, 64), delta_beta=-400)
-    assert m(torch.rand(1, 3, 64, 64)) is not None       # Δβ = 0 stays allowed
+    m = _codec(gain=True, mcm=True)
+    m.update()
+    x = torch.rand(1, 3, 64, 64)
+
+    # Δβ = 0 is still the exact no-op, on the context-model path too.
+    plain = _codec(gain=False, mcm=True)
+    plain.load_state_dict({k: v for k, v in m.state_dict().items()
+                           if not k.endswith("gain.vector")
+                           and "q_offsets" not in k}, strict=False)
+    plain.update()
+    a, b = m.compress(x, delta_beta=0), plain.compress(x)
+    assert _strings(a) == _strings(b)
+    assert torch.equal(m.decompress(a)["x_hat"], plain.decompress(b)["x_hat"])
+
+    # Rate moves monotonically, and the decoder reaches the encoder's own latent.
+    sizes = []
+    for d in (DELTA_BETA_MIN, -600, -300, 0, 300, DELTA_BETA_MAX):
+        packet = m.compress(x, delta_beta=d)
+        out = m.decompress(packet)
+        enc = m(x, delta_beta=d, ste=False)
+        # The loop's own reconstruction is the authoritative one: it is the tensor both
+        # ends build coset by coset. Bit-exact, not merely close.
+        assert torch.equal(out["y_hat"], enc["mcm_y_hat"])
+        sizes.append(m.packet_bytes(packet))
+    assert sizes == sorted(sizes), sizes
+    assert sizes[-1] > 2 * sizes[0]
+
+
+def test_a_spatial_quality_map_survives_the_coset_split():
+    """`m` at `(N,C,H,W)` has to be split by the same strided indexing as the latent.
+
+    Splitting it any other way — or not at all — hands coset `(i,j)` the multiplier of
+    a different sub-position. Every byte still decodes; the ROI simply lands in the
+    wrong place, shifted by one latent sample, which is invisible at any rate the
+    ladder reports. So this is checked on a map whose interior differs from its border.
+    """
+    torch.manual_seed(0)
+    m = _codec(gain=True, mcm=True)
+    m.update()
+    x = torch.rand(1, 3, 64, 64)
+    q = torch.zeros(1, 1, 4, 4, dtype=torch.long)
+    q[..., 1:3, 1:3] = Q_INDEX_MAX          # a box that is not the whole map
+
+    flat = m.packet_bytes(m.compress(x, delta_beta=0))
+    for qi, expect in ((torch.full_like(q, Q_INDEX_MIN), "cheaper"),
+                       (q, "dearer"), (torch.full_like(q, Q_INDEX_MAX), "dearest")):
+        packet = m.compress(x, delta_beta=0, q_index=qi)
+        out = m.decompress(packet)
+        enc = m(x, delta_beta=0, q_index=qi, ste=False)
+        assert torch.equal(out["y_hat"], enc["mcm_y_hat"]), expect
+        # The map is signalled as residuals, and the decoder rebuilds it from those.
+        assert "q_residual" in packet
+        if expect == "cheaper":
+            assert m.packet_bytes(packet) < flat
+        else:
+            assert m.packet_bytes(packet) > flat
+
+
+def test_the_rate_search_cache_still_holds_with_a_context_model():
+    """Fig. 9's cache is thinner here — the coset loop is per-Δβ work — but it must
+    still produce the same bytes as a plain encode, or bit-rate matching would search
+    one function and the final encode would emit another."""
+    torch.manual_seed(0)
+    m = _codec(gain=True, mcm=True)
+    m.update()
+    x = torch.rand(1, 3, 64, 64)
+    cache = m.precompress(x)
+    for d in (DELTA_BETA_MIN, -400, 0, 400, DELTA_BETA_MAX):
+        assert _strings(m.compress_cached(cache, delta_beta=d)) == \
+               _strings(m.compress(x, delta_beta=d)), d
 
 
 def test_the_phase_4_branch_also_refuses_instead_of_silently_ignoring():

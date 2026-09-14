@@ -41,9 +41,11 @@ wrong by up to 72 points. Both are written up in
 [README](../README.md).
 
 Everything that can be checked without trained weights is checked on every commit:
-**498 pytest tests** and **210 self-test checks**, the latter including a bit-exact
+**505 pytest tests** and **210 self-test checks**, the latter including a bit-exact
 encode→decode round trip through a real rANS bitstream for all three internal chroma
-formats × all six entropy-model kinds. Pointed at a trained checkpoint
+formats and all eight fixed-rate entropy-model kinds (the two variable-rate kinds are
+covered by `tests/test_gain.py` instead, since their gate is a nine-rung Δβ sweep rather
+than a single round trip). Pointed at a trained checkpoint
 (`--checkpoint <path>`) the self-test adds 5 more that only mean something once weights
 have moved — including the one that would have caught the coder bug described at the end
 of this file.
@@ -402,6 +404,114 @@ the context nets aren't seeing previous groups", and the wall-clock half of the 
 *structural* halves of both are pinned: the dependency graph is asserted directly
 (a later coset must change when an earlier one changes; same-stage siblings must not),
 and the pass count is asserted to be 4 at 64² and at 256².
+
+
+## Phase 8 — the gain unit and variable rate (built; no trained weights yet)
+
+`jpegai/models/gain.py` and `jpegai/coder/brm.py`, wired into `twobranch.py`. This is the
+overview paper's §VI-I (eqs 11–15), built from the fuller treatment in
+**arXiv:2503.16288, "Overview of Variable Rate Coding in JPEG AI"** — whose equation
+numbers are the ones used below and throughout `gain.py`, since it is the document that
+actually derives the mechanism. **One learned vector per branch** turns a single checkpoint
+into a whole rate ladder, which is the difference between shipping a codec and shipping
+four. Phase 7 (the neural post-filters) is deferred ahead of it; the triage is in
+[03-implementation-plan.md](03-implementation-plan.md#phase-map-revised).
+
+Two more `--model` kinds, both of them a backbone plus 144 parameters:
+
+| kind | backbone | params | decoder kMAC/pxl at Tier A |
+|---|---|---|---|
+| `twobranch-vr` | Phase 5 `twobranch-split` | 4,575,747 (+144) | 128.9 (+0.0) |
+| `twobranch-vr-mcm` | Phase 6 `twobranch-mcm` | 5,627,715 (+144) | 129.9 (+0.0) |
+
+The vectors are `(1, 96, 1, 1)` on luma and `(1, 48, 1, 1)` on chroma. Both kinds exist
+because `meta["model"]` is on-disk format and eleven checkpoints were written against the
+first one; `twobranch-vr-mcm` is the one to train, because forfeiting Phase 6's 1.8% to
+save 0 kMAC/pxl would be a strange trade. Nothing else in either row moves: the gain is an
+elementwise multiply on a `/16` field, below the rounding of a kMAC/pxl figure.
+
+### The gain is an additive offset on the σ index
+
+Not a multiplier bolted on beside one. Reading eq. (10) against Phase 5's codebook makes
+`S_σ` and `P_β` concrete rather than free constants:
+
+```
+o  = gain_vector + Δβ           in Iσ units, seven fractional bits
+m  = exp(log_k · o / step)      log_k = (ln 54.82 − ln 0.11)/31 = 0.200365, step = 2⁷
+Iσ' = Iσ + o                    so σ' = m · σ, exactly, off the same codebook
+```
+
+`S_σ` **is** `SigmaIndex.log_k` and `P_β` **is** `SigmaIndex.step` — the paper's `S_σ = 0.2`
+is that number to one significant figure, because both are "the entropy model's quantisation
+step". That identity is the whole reason this is cheap: scaling a residual by `m` scales its
+standard deviation by `m`, so the coder has to widen its Gaussian by the same `m`, and on a
+log-spaced grid adding `o` to the index does exactly that. Nothing in `GaussianConditional`
+changes, no CDF table is rebuilt, and `SigmaIndex.clamp` already bounds the shifted index.
+`Iσ` is not context modelled, so `coder_params` is inherited unchanged too.
+
+Δβ is the integer that goes in the picture header — a 12-bit signed field clamped to
+`[−1069, 702]`, asymmetric because performance falls off faster above the anchor point than
+below it (Fig. 6). `o` itself stays float: the trained vector is a float Parameter, and
+`GainUnit.offset(..., quantise=True)` rounds onto the reference software's fixed-point grid
+only when asked, which is a Phase 11 cross-device concern and not ours.
+
+**The quality map multiplies the residual, not the latent** (eqs. 7/8): `r' = m·(y − p̈)`
+on the way in and `ŷ = r̂/m + p̈` on the way out. Written that way round on purpose —
+`(r̂ + m·p̈)/m` is the same algebra and a different float, and the decoder computes the
+first.
+
+**The vectors are zero-initialised** (`gain.py:174`), so at `Δβ = 0` a gained model is the
+bit-exact identity of its backbone. That is not a convenience, it is Table II stage IV's
+premise: a trained fixed-rate checkpoint warm-starts into a variable-rate one *at its own
+rate*, and stage IV then trains the gain — for the low-rate anchor model 0 that is the 144
+parameters and nothing else, and for models 1–3 the decoder comes along with it. Both are
+`train.stages.schedule(config, model_id)`, and `check_partition` asserts that the four
+buckets `("encoder", "decoder", "entropy", "gain")` partition `model.parameters()` exactly,
+so a stage cannot quietly freeze something it was meant to train.
+
+### The same offset, made spatial, is region-of-interest coding for free
+
+`m` is a full 3D map, `(C, H/16, W/16)`, and it is never signalled — only the control
+parameters are. Fig. 4's three cases fall out of one `offset()` call: the channel-wise
+vector alone broadcast spatially (4a), a spatial `q_index` alone against a still-zero vector
+(4b), or the product of the two (4c) — a product of exponentials being a sum of exponents,
+which is why everything here composes by addition. `q_index` is Table I's integer map on the
+latent grid, `(N, 1, H/16, W/16)` with values in `[−8, 8]`, so **one control value per 16×16
+image block**, spanning 0.25× to 4× in σ off a fixed 17-entry table. That is the RoI demo
+Phase 14 wants, and it needs no extra training: `q_offsets` is a buffer derived from that
+table, so a checkpoint that never saw a spatial map still honours one.
+
+### Two bugs the structure invites, both now pinned
+
+**The gain must be applied inside the MCM coset loop.** Stage `k` conditions on the
+reconstructions of stages `< k`, so scaling the assembled field afterwards leaves the rate
+monotone, the offset neutral and every summary statistic healthy while the decoder drifts.
+Only `beta_exact` — ŷ compared tensor-for-tensor across all nine Δβ rungs — catches it.
+This is the same failure mode as the Phase 6 channel-layout bug described below, arrived at
+from the opposite direction.
+
+**Eq. (9) divides by the β of the stage with the most epochs**, which for a bolted-on gain
+unit is the checkpoint it inherited, not the config row it is training under. Phase 8's
+backbone is the 200,000-step β 0.012 run; `config.rate.models[1].beta_train` is 0.007.
+Recording the latter would put every rate request off by `beta_displacement(0.012, 0.007)`
+`= +344` Δβ units — a fifth of the usable range — silently, because the displacement is
+`floor(log(β_test / β_anchor) · step / log_k)` (`gain.py:119`) and every intermediate value
+of a wrong one stays perfectly plausible.
+`train.stages.resolve_anchor_beta` resolves it once per run from `--anchor-beta`, then the
+warm start's own metadata, then the config, and `final.pt` records both the value and which
+of the three it came from.
+
+### Verified without trained weights, and what is still owed
+
+`tests/test_gain.py` is 64 tests, `tests/test_stages.py` 52 and `tests/test_brm.py` 57.
+`train.loop.delta_beta_check` runs the sweep inside training on a three-point cadence and
+once at the end across `rate.beta_eval_points` — nine rungs from −1069 to +702. On an
+untrained `twobranch-vr-mcm` it already reports `beta_exact True`, `beta_monotone True`,
+`beta_neutral True`, `beta_unit_gain True`, `beta_maxerr 0.0` and a span of about **4.6×**
+with neither end saturating the σ table. That span is the number stage III/IV exist to move:
+**the phase's acceptance test is `beta_exact` at all nine rungs and `beta_span > 10` from one
+checkpoint**, plus the variable-rate BD-rate penalty against the fixed-rate ladder — a number
+the paper does not publish, which makes it worth measuring rather than citing.
 
 
 ## The channel-layout bug that only the warm start could see

@@ -82,7 +82,6 @@ import torch.nn as nn
 from torch import Tensor
 
 from jpegai.models.entropy import GaussianConditional, quantize_ste
-from jpegai.models.gain import reject_gain
 from jpegai.models.hyper import HyperDecoder, SigmaIndex, SplitHyperBranch
 from jpegai.models.layers import activation
 
@@ -331,7 +330,8 @@ class MultiStageContextModel(nn.Module):
         return len(self.schedule)
 
     def reconstruct(self, pred: Tensor, *, y: Tensor | None = None,
-                    r_hat: Tensor | None = None, ste: bool = True) -> dict:
+                    r_hat: Tensor | None = None, ste: bool = True,
+                    m: Tensor | None = None) -> dict:
         """`{means, y_hat, r_hat}` from the pre-shuffle prediction and one of `y`/`r_hat`.
 
         `pred` is the hyper decoder's `[4*chs, /32]` output, cut into per-coset
@@ -348,6 +348,21 @@ class MultiStageContextModel(nn.Module):
         `ste` follows the rest of the project -- straight-through during training so
         the gradient reaches `g_a`, plain rounding at inference. Both round the same
         way, so switching it cannot move a bit of the bitstream.
+
+        `m` is Phase 8's quality map (eq. 7), and it has to be applied **here**, one
+        coset at a time, rather than on the assembled field. The reason is the loop's
+        own feedback: stage `k`'s context network reads the *reconstructions* of stages
+        `< k`, so if the gain were applied outside, every stage after the first would
+        condition on a latent that the decoder never sees. Inside, each coset scales,
+        rounds, and immediately un-scales, so `rec[c]` is the value both ends hold:
+
+            encoder:  r = round(m_c * (y_c - k_c)),  rec = r / m_c + k_c
+            decoder:  r = off the wire,              rec = r / m_c + k_c
+
+        `m` broadcasts from `(1, C, 1, 1)` for a channel-wise map, in which case every
+        coset gets the same multiplier and no split is needed. A spatial or joint map
+        is `(N, C, H, W)` on the latent grid and *is* coset-split, by the same strided
+        indexing as the latent, so a per-block ROI decision follows its own samples.
         """
         if (y is None) == (r_hat is None):
             raise ValueError("reconstruct() takes exactly one of y= (encoder) or "
@@ -361,6 +376,7 @@ class MultiStageContextModel(nn.Module):
             )
         pred_parts = split_pred(pred, self.order)
         src = split_cosets(y if r_hat is None else r_hat, self.order)
+        gain = self.split_gain(m)
 
         n = len(self.order)
         ctx: list[Tensor | None] = [None] * n
@@ -376,35 +392,42 @@ class MultiStageContextModel(nn.Module):
             earlier = [rec[i] for i in done]
             for c in cosets:
                 k = self.nets[c](pred_parts[c], earlier)
+                mc = gain[c]
                 if r_hat is None:
                     v = src[c] - k
+                    if mc is not None:
+                        v = mc * v
                     r = quantize_ste(v) if ste else torch.round(v)
                 else:
                     r = src[c]
-                ctx[c], res[c], rec[c] = k, r, r + k
+                # `r / m + k`, not `(r + m*k) / m`: the second is algebraically the
+                # same and numerically is not, and the decoder computes the first.
+                rc = r if mc is None else r / mc
+                ctx[c], res[c], rec[c] = k, r, rc + k
             done.extend(cosets)
         return {"means": join_cosets(ctx, self.order),
                 "y_hat": join_cosets(rec, self.order),
                 "r_hat": join_cosets(res, self.order)}
 
+    def split_gain(self, m: Tensor | None) -> list[Tensor | None]:
+        """The quality map, per coset. `None` in, `[None] * n` out.
+
+        Split only when `m` actually varies spatially. A channel-wise map is
+        `(1, C, 1, 1)` and broadcasts onto a coset unchanged, so slicing it would be
+        four views of one element -- and would also demand an even grid from a tensor
+        whose spatial extent is 1, which :func:`split_cosets` correctly refuses.
+        """
+        n = len(self.order)
+        if m is None:
+            return [None] * n
+        if m.shape[-2:] == (1, 1):
+            return [m] * n
+        return split_cosets(m, self.order)
+
     def extra_repr(self) -> str:
         sched = " -> ".join("+".join(f"{self.order[c]}" for c in st)
                             for st in self.schedule)
         return f"chs={self.chs}, stages={self.stages}, {sched}"
-
-
-def _no_gain(delta_beta, q_index) -> None:
-    """Refuse a quality map on the context-model branch rather than ignore one.
-
-    The three overrides below accept `delta_beta`/`q_index` so that this branch stays
-    signature-compatible with `SplitHyperBranch` -- callers should not have to know
-    which branch they hold. See `MCMBranch.__init__` for why it cannot be honoured.
-    """
-    reject_gain(delta_beta, q_index, "MCMBranch",
-                "The coset loop quantises internally, so the gain has to be applied "
-                "inside it and a spatial map coset-split alongside the latent; see "
-                "MCMBranch.__init__. Variable rate runs on `mcm: false` with "
-                "`gain: true`.")
 
 
 
@@ -426,27 +449,24 @@ class MCMBranch(SplitHyperBranch):
       is what the 4-stage loop produces, and it needs the residuals. It returns
       `pred` instead, and `means` is present but `None` so that a caller reaching
       for it gets an obvious `None` rather than a stale prediction from `p̈`.
+
+    Phase 8's gain unit composes with all of that, because the two mechanisms touch
+    different things: the context model refines the *mean*, the gain unit scales the
+    *residual around it* and shifts `Iσ` by the same offset. `Iσ` is not context
+    modelled, so `coder_params` is inherited unchanged and the only Phase-8-aware code
+    here is the `m=` it hands to the coset loop. What is *not* free is the ordering --
+    see :meth:`MultiStageContextModel.reconstruct` for why the gain has to be applied
+    coset by coset inside the loop rather than once on the assembled field.
     """
 
     def __init__(self, latent: int, hyper: int, *, sigma_index: SigmaIndex,
                  stages: int = 4, order=GROUP_ORDER, scale_layers: int = 2,
                  activation_name: str = "relu", precision: int = 16,
                  gain: bool = False, scaler_precision: int = 10):
-        if gain:
-            raise NotImplementedError(
-                "the Phase 8 gain unit is not wired into the context model. It is not "
-                "a matter of threading an argument: `MultiStageContextModel."
-                "reconstruct` quantises each coset internally, so the gain has to be "
-                "applied *inside* that loop (encoder: round(m*(y - ctx)); decoder: "
-                "ctx + r_hat/m) and a spatial quality map has to be coset-split "
-                "alongside the latent. Doing it by halves would put the encoder and "
-                "decoder on different reconstructions, which is exactly the class of "
-                "bug this branch's `means=None` invariant exists to prevent. Variable "
-                "rate runs on the split-hyper line: `mcm: false` with `gain: true`."
-            )
         super().__init__(latent, hyper, sigma_index=sigma_index, fused=False,
                          scale_layers=scale_layers,
-                         activation_name=activation_name, precision=precision)
+                         activation_name=activation_name, precision=precision,
+                         gain=gain, scaler_precision=scaler_precision)
         self.h_s = HyperDecoder(latent, activation_name=activation_name,
                                 shuffle=False)
         self.mcm = MultiStageContextModel(latent, stages=stages, order=order,
@@ -482,17 +502,26 @@ class MCMBranch(SplitHyperBranch):
                 noise: bool | None = None, ste: bool = True,
                 delta_beta: int | float | Tensor = 0,
                 q_index: Tensor | None = None) -> dict:
-        _no_gain(delta_beta, q_index)
         z = self.h_a(y)
         z_hat, z_lik = self.entropy_bottleneck(z, noise=noise, ste=ste)
-        p = self.predict(z_hat)
-        mcm = self.mcm.reconstruct(p["pred"], y=y, ste=ste)
+        p = self.coder_params(z_hat, delta_beta=delta_beta, q_index=q_index)
+        m = p["m"]
+        mcm = self.mcm.reconstruct(p["pred"], y=y, ste=ste, m=m)
         # `gc` is still the thing that produces `y_hat` and the likelihood, given the
         # mean the loop arrived at. Its `hat` is `mean + quantise(y - mean)`, which is
         # the loop's own `y_hat` recomputed -- `tests/test_mcm.py` pins that they
         # agree, so the rate the loss sees and the latent the synthesis transform
         # sees cannot drift apart without a test failing.
-        y_hat, y_lik = gc(y, p["scales"], mcm["means"], noise=noise, ste=ste)
+        if m is None:
+            y_hat, y_lik = gc(y, p["scales"], mcm["means"], noise=noise, ste=ste)
+        else:
+            # eqs. (7) and (8), exactly as on the split-hyper branch: the residual
+            # arrives already centred *and* already scaled, so `means=None` here or it
+            # would be subtracted twice. The mean it is centred on is the loop's, not
+            # `p̈` -- that is the whole composition.
+            r_hat, y_lik = gc(m * (y - mcm["means"]), p["scales"], None,
+                              noise=noise, ste=ste)
+            y_hat = r_hat / m + mcm["means"]
         return {"y_hat": y_hat, "y_lik": y_lik, "z_lik": z_lik,
                 "z": z, "z_hat": z_hat,
                 "scales": p["scales"], "means": mcm["means"],
@@ -500,59 +529,59 @@ class MCMBranch(SplitHyperBranch):
                 # The loop's own outputs, for the gate and for the ablation: `r_hat`
                 # is what the coder writes, and its statistics are the only direct
                 # evidence that the context model is doing anything.
-                "mcm_y_hat": mcm["y_hat"], "r_hat": mcm["r_hat"]}
+                "mcm_y_hat": mcm["y_hat"], "r_hat": mcm["r_hat"],
+                "gain": p["m"], "gain_offset": p["offset"]}
 
     # -- real bitstream -----------------------------------------------------
     @torch.no_grad()
     def code_cached(self, pre: dict, gc: GaussianConditional, *,
                     delta_beta: int | float | Tensor = 0,
                     q_index: Tensor | None = None) -> dict:
-        """Refused, not inherited.
+        """One rate point from a `precode` cache -- but a thinner cache than Phase 5's.
 
-        `SplitHyperBranch.code_cached` codes `y` against `means` from the scale
-        decoder alone, which for this branch is only the *hyper* part of the context.
-        Inheriting it would silently drop the context model -- the bitstream would
-        decode to a different picture, and the rate would look plausible. Since Fig.
-        9's cache exists to serve the Δβ search, and this branch has no Δβ, there is
-        nothing to inherit it for.
+        The paper's claim that "the tensor before the gain unit is consistently
+        identical" still holds here, and `precode` is inherited unchanged: `z`, the
+        hyper bitstream and `z_hat` are all pre-gain and run once. What this branch
+        cannot skip is the coset loop. Stage `k` conditions on reconstructions that
+        depend on `m`, so the four context networks *are* per-Δβ work, and a Δβ search
+        on this branch costs ten coset loops instead of ten arithmetic-coder passes.
+
+        That is a real encode-time cost and it is the honest price of making the two
+        rate savings additive. It is still far cheaper than ten full encodes: `g_a`,
+        `h_a`, the factorised prior and `h_scale` all stay outside the loop, and the
+        context networks are 1x1 and grouped 3x3 convolutions on a `/32` grid.
         """
-        raise NotImplementedError(
-            "MCMBranch has no cached-encode path: the coset loop is part of the "
-            "encode, so there is no 'everything before the gain unit' to cache. Rate "
-            "search runs on `mcm: false` with `gain: true`; see MCMBranch.__init__."
-        )
+        p = self.coder_params(pre["z_hat"], quantise=True,
+                              delta_beta=delta_beta, q_index=q_index)
+        mcm = self.mcm.reconstruct(p["pred"], y=pre["y"], ste=False, m=p["m"])
+        values = pre["y"] if p["m"] is None else p["m"] * (pre["y"] - mcm["means"])
+        means = mcm["means"] if p["m"] is None else None
+        return {"y_strings": gc.compress(values, p["scales"], means,
+                                         indexes=p["rows"]),
+                "z_strings": pre["z_strings"], "z_shape": pre["z_shape"]}
 
     @torch.no_grad()
     def compress(self, y: Tensor, gc: GaussianConditional, *,
                  delta_beta: int | float | Tensor = 0,
                  q_index: Tensor | None = None) -> dict:
-        _no_gain(delta_beta, q_index)
-        z = self.h_a(y)
-        z_strings = self.entropy_bottleneck.compress(z)
-        # From the decoded z_hat, never from z -- the decoder has only the former.
-        z_hat = self.entropy_bottleneck.decompress(
-            z_strings, tuple(z.shape[-2:]), device=z.device)
-        p = self.predict(z_hat, quantise=True)
-        mcm = self.mcm.reconstruct(p["pred"], y=y, ste=False)
-        # One stream, exactly as in Phase 5. `round(y - means)` inside `gc.compress`
-        # reproduces the residual the loop already quantised coset by coset, because
-        # `means` is that loop's own context assembled back onto the grid.
-        return {"y_strings": gc.compress(y, p["scales"], mcm["means"],
-                                         indexes=p["rows"]),
-                "z_strings": z_strings, "z_shape": tuple(z.shape[-2:])}
+        """Single-shot encode: `precode` then `code_cached`, and nothing else, so a
+        cached rate search and a plain encode cannot drift apart."""
+        return self.code_cached(self.precode(y), gc,
+                                delta_beta=delta_beta, q_index=q_index)
 
     @torch.no_grad()
     def decompress(self, part: dict, gc: GaussianConditional, device, *,
                    delta_beta: int | float | Tensor = 0,
                    q_index: Tensor | None = None) -> dict:
-        _no_gain(delta_beta, q_index)
         z_hat = self.entropy_bottleneck.decompress(
             part["z_strings"], tuple(part["z_shape"]), device=device)
-        p = self.predict(z_hat, quantise=True)
+        p = self.coder_params(z_hat, quantise=True,
+                              delta_beta=delta_beta, q_index=q_index)
         # `means=None`: this call returns the *residual field*, and it returns all of
         # it in one pass with no network in the loop. That is §VI-E's decoupling in
-        # one line -- the entropy engine never waits for the accelerator.
+        # one line -- the entropy engine never waits for the accelerator. It stays true
+        # with a gain unit, because `Iσ` carries the offset and needs no context.
         r_hat = gc.decompress(part["y_strings"], p["scales"], None,
                               indexes=p["rows"])
-        mcm = self.mcm.reconstruct(p["pred"], r_hat=r_hat, ste=False)
+        mcm = self.mcm.reconstruct(p["pred"], r_hat=r_hat, ste=False, m=p["m"])
         return {"y_hat": mcm["y_hat"], "z_hat": z_hat, "r_hat": r_hat}
