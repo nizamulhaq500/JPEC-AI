@@ -311,7 +311,9 @@ class ScaleHyperprior(nn.Module):
 
         `gain` is present and **empty** rather than absent. A stage that asks to train
         the gain unit of a fixed-rate model must fail loudly on "nothing to train", not
-        on `KeyError`.
+        on `KeyError`. `tools` is present and empty for the same reason: Phase 10's
+        latent-domain tools live only on the two-branch split path, so this model never
+        has any, but the partition's part set must still be complete.
         """
         parts = {
             "encoder": [("g_a", self.g_a)],
@@ -319,6 +321,7 @@ class ScaleHyperprior(nn.Module):
             "entropy": [("h_a", self.h_a), ("h_s", self.h_s),
                         ("entropy_bottleneck", self.entropy_bottleneck)],
             "gain": [],
+            "tools": [],
         }
         if getattr(self, "h_scale", None) is not None:
             parts["entropy"].append(("h_scale", self.h_scale))

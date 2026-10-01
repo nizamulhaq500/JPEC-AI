@@ -435,6 +435,18 @@ class SplitHyperBranch(nn.Module):
         first and adding afterwards would be self-consistent -- both ends would agree --
         but it would throw away the fractional part of the offset for nothing.
 
+        A second consistency, the one Phase 8's round-trip gate turns on: `m` and the
+        codec must agree on the offset. `compress`/`decompress` commit to the offset on
+        the reference software's fixed-point grid (`quantise=True`); the differentiable
+        forward keeps it continuous so a gradient reaches the gain vector. Feed the coder
+        a continuous `m` and the decoder rebuilds the residual with a multiplier ~1e-6
+        off the encoder's -- harmless to rate, but it flips `round(m*(y-p̈))` on the
+        elements sitting on a half-integer, and `y_hat = r_hat/m + p̈` blows each flip up
+        to ~1/m. That is `beta_exact`'s off-by-one. So the offset is quantised whenever
+        the module is not training: at inference `m` matches the bitstream exactly, in
+        training it stays continuous. Only the offset -- `scales`/`rows` still follow the
+        caller's `quantise`, so the forward keeps its continuous likelihood.
+
         With no gain unit this is `predict()` verbatim, including the `quantise` path,
         so Phase 5's bitstreams are unaffected by this code existing.
 
@@ -445,7 +457,8 @@ class SplitHyperBranch(nn.Module):
         if self.gain is None:
             return {**self.predict(z_hat, quantise=quantise), "m": None, "offset": None}
         p = self.predict(z_hat, quantise=False)
-        offset = self.gain.offset(delta_beta, q_index, quantise=quantise)
+        offset = self.gain.offset(delta_beta, q_index,
+                                  quantise=quantise or not self.training)
         shifted = p["i_sigma"] + offset
         out = {**p, "m": self.gain.scale(offset), "offset": offset}
         if not quantise:
@@ -555,5 +568,10 @@ class SplitHyperBranch(nn.Module):
             r_hat = gc.decompress(part["y_strings"], p["scales"], None,
                                   indexes=p["rows"])
             y_hat = r_hat / p["m"] + p["means"]
-        return {"y_hat": y_hat, "z_hat": z_hat}
+        # `means` (the prediction p̈) and the integer `i_sigma` are what the Phase 10
+        # latent-domain tools index by; the branch is the only place that has both on
+        # the same footing the coder used, so it hands them up rather than making the
+        # codec re-derive them from `z_hat`.
+        return {"y_hat": y_hat, "z_hat": z_hat,
+                "means": p["means"], "i_sigma": p["i_sigma"]}
 

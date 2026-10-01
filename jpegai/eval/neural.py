@@ -220,8 +220,12 @@ class NeuralCodec:
         # `meta["model"]` selects the architecture, so a two-branch checkpoint
         # rebuilds as two-branch without the caller having to know. Defaulting to
         # "scale" keeps the Phase 3 checkpoints, written before the key existed,
-        # loadable.
-        model = build_any_model(cfg, meta.get("model", "scale")).to(self._device)
+        # loadable. `meta["tools"]`, when present, re-attaches the Phase 10 tools a
+        # checkpoint was trained with -- without it the tool params would have no home
+        # and `load_checkpoint` would fail; pre-Phase-10 checkpoints have no key and so
+        # rebuild toolless exactly as before.
+        model = build_any_model(cfg, meta.get("model", "scale"),
+                                tools=tuple(meta.get("tools", ()))).to(self._device)
         load_checkpoint(path, model)
         model.eval()
         model.update(force=True)

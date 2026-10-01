@@ -584,4 +584,7 @@ class MCMBranch(SplitHyperBranch):
         r_hat = gc.decompress(part["y_strings"], p["scales"], None,
                               indexes=p["rows"])
         mcm = self.mcm.reconstruct(p["pred"], r_hat=r_hat, ste=False, m=p["m"])
-        return {"y_hat": mcm["y_hat"], "z_hat": z_hat, "r_hat": r_hat}
+        # `means` here is the fully-reconstructed prediction the MCM assembled coset by
+        # coset; `i_sigma` is the integer variance index. Both feed Phase 10's RVS/LSBS.
+        return {"y_hat": mcm["y_hat"], "z_hat": z_hat, "r_hat": r_hat,
+                "means": mcm["means"], "i_sigma": p["i_sigma"]}

@@ -47,7 +47,8 @@ from jpegai.train.dataset import build_loaders
 from jpegai.train.losses import MSE_SCALE, loss_from_config
 from jpegai.train.stages import (STAGE_NAMES, apply_freeze, aux_is_trained,
                                  check_partition, find_stage, part_parameters,
-                                 resolve_anchor_beta, sample_delta_beta, stage_steps)
+                                 resolve_anchor_beta, sample_delta_beta, stage_steps,
+                                 tools_stage)
 from jpegai.utils import describe_device, pick_device, seed_everything
 
 CHECKPOINT_ROOT = PROJECT_ROOT / "checkpoints"
@@ -496,6 +497,19 @@ def load_checkpoint(path: Path, model, opt=None, aux_opt=None) -> dict:
     return blob
 
 
+def _parse_tools(spec) -> tuple[str, ...]:
+    """`--tools rvs,lsbs` -> `("rvs", "lsbs")`; `None`/`""` -> `()`.
+
+    Split here, never handed to the model as a bare string: the two-branch constructor
+    iterates its `tools` argument, so passing `"rvs"` unsplit would attach three tools
+    named `r`, `v`, `s`. The names themselves are validated there against `ALL_TOOLS`,
+    so this only splits and trims -- an unknown name still raises, just one layer in.
+    """
+    if not spec:
+        return ()
+    return tuple(t.strip() for t in str(spec).split(",") if t.strip())
+
+
 # ---------------------------------------------------------------------------
 # The loop
 # ---------------------------------------------------------------------------
@@ -504,7 +518,7 @@ def train(args) -> int:
     seed_everything(args.seed if args.seed is not None else cfg.train.seed)
     device = pick_device(args.device, verbose=True)
 
-    model = build_any_model(cfg, args.model).to(device)
+    model = build_any_model(cfg, args.model, tools=_parse_tools(args.tools)).to(device)
 
     # -- Table II, if a stage was named ------------------------------------
     # Resolved before the loss and the optimiser, because it supplies both: the stage
@@ -512,7 +526,31 @@ def train(args) -> int:
     # MSE), the step budget, and the freeze list.
     stage = None
     beta_override = False
-    if args.stage:
+    if args.stage and args.train_tools:
+        raise SystemExit("--stage and --train-tools are mutually exclusive: one runs a "
+                         "Table II row, the other the Phase 10 tools fine-tune")
+    if args.train_tools:
+        # Phase 10's "freeze the rest of the codec and train only the tools" pass. It is
+        # not a Table II row -- no `config.rate` entry, no epoch share -- so it is built
+        # here rather than looked up, but it drives the identical freeze/optimiser seam
+        # below (a `ToolsStage` duck-types `Stage`). Two things have to be true first:
+        tool_names = getattr(model, "tool_names", frozenset())
+        if not tool_names:
+            raise SystemExit("--train-tools needs tools to train: pass e.g. "
+                             "--tools rvs,lsbs (the model was built with none)")
+        # The tools are residual refinements of an *already trained* codec; there is no
+        # backbone to refine if this is a cold start, and the freeze would leave the
+        # optimiser training tool tables on top of random synthesis. Insist on a base.
+        if not (args.warm_start or args.resume):
+            raise SystemExit("--train-tools refines a trained codec: pass --warm-start "
+                             "<backbone.pt> (or --resume to continue a tools run)")
+        has_gain = bool(model.gain_parameters())
+        stage = tools_stage(beta=args.beta,
+                            sample_delta_beta=has_gain and not args.no_sample_delta_beta,
+                            model_id=args.model_id)
+        check_partition(model)
+        apply_freeze(model, stage.parts)
+    elif args.stage:
         stage = find_stage(cfg, args.model_id, args.stage,
                            sample_delta_beta=not args.no_sample_delta_beta)
         # The partition invariant, checked on the real model before anything trains.
@@ -609,10 +647,12 @@ def train(args) -> int:
             raise FileNotFoundError(ck)
 
     total = args.iterations or cfg.train.iterations
-    if stage is not None and args.iterations is None:
+    if stage is not None and args.iterations is None and not getattr(stage, "is_tools", False):
         # The paper's epoch counts become *shares* of a step budget, because the dataset
         # here is not CTTC's 5264 sequences. 64:32:20:12 of `train.iterations` preserves
         # the one thing those counts encode -- stage I is half the run, stage IV a tenth.
+        # The tools fine-tune is exempt: it has no Table II row to take a share of, so it
+        # runs for the full `--iterations` (or `train.iterations`) directly.
         total = stage_steps(cfg, args.model_id, stage.name, total,
                             sample_delta_beta=not args.no_sample_delta_beta)
 
@@ -829,6 +869,8 @@ def train(args) -> int:
                     f.write(json.dumps({"step": step, "valid": v}) + "\n")
                 meta = {"tier": args.tier, "model": args.model,
                         "beta": criterion.beta, "valid": v,
+                        **({"tools": sorted(model.tool_names)}
+                           if getattr(model, "tool_names", None) else {}),
                         "valid_set": getattr(valid, "roots", None)}
                 if v["loss"] < best_val:
                     best_val = v["loss"]
@@ -852,6 +894,8 @@ def train(args) -> int:
                      **({"stage": stage.name, "model_id": stage.model_id,
                          "anchor_beta": anchor, "anchor_beta_from": anchor_src}
                         if stage is not None else {}),
+                     **({"tools": sorted(model.tool_names)}
+                        if getattr(model, "tool_names", None) else {}),
                      **({"dbeta": db} if db else {}),
                      "valid_set": getattr(valid, "roots", None),
                      "valid_images": [valid.name(i) for i in range(len(valid))]})
@@ -985,6 +1029,23 @@ def main(argv=None) -> int:
                          "offset in training and then has to hold across the whole "
                          "clamp at evaluation, so sampling is the default. Use this "
                          "to measure what the sampling buys")
+    # -- Phase 10's switchable tools (Table IV) ----------------------------------
+    ap.add_argument("--tools", default=None, metavar="LIST",
+                    help="comma-separated switchable tools to attach to the model: "
+                         "rvs,lsbs (latent-domain table refinements, need the "
+                         "split-hyper path) and lef,icci,efe-nonlinear,efe-linear "
+                         "(pixel-domain post-filters). All six are identity at init, "
+                         "so attaching them changes no bytes until they are trained. "
+                         "Needed both to train them (--train-tools) and, at eval, to "
+                         "reconstruct a model that was; the list is recorded in the "
+                         "checkpoint's meta so the evaluator rebuilds it automatically")
+    ap.add_argument("--train-tools", action="store_true",
+                    help="Phase 10's fine-tune: freeze the whole codec and train only "
+                         "the tools attached with --tools. Requires a trained backbone "
+                         "via --warm-start (the tools are residual refinements of an "
+                         "existing codec, not something to train from scratch). "
+                         "Mutually exclusive with --stage; the run is sized by "
+                         "--iterations directly, not a Table II epoch share")
     args = ap.parse_args(argv)
     # Conditional, because `--stage` owns beta: stages III/IV of models 1-3 raise it
     # to `beta_stage34`, and filling in the config default here would silently win

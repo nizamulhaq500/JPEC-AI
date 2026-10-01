@@ -31,7 +31,7 @@ DEFAULT_KIND = "twobranch-mcm"
 MCM_STAGES = {"twobranch-mcm": 4, "twobranch-mcm2": 2, "twobranch-mcm1": 1}
 
 
-def build_any_model(config, kind: str = "scale"):
+def build_any_model(config, kind: str = "scale", *, tools=()):
     """Build `scale`/`mean-scale` (Phase 3), `twobranch` (Phase 4), one of the two
     Phase 5 split-hyper variants, or Phase 6's context-modelled codec.
 
@@ -61,15 +61,15 @@ def build_any_model(config, kind: str = "scale"):
     if kind == "twobranch-vr":
         from jpegai.models.twobranch import build_two_branch
         return build_two_branch(config, mean_scale=True, split_hyper=True,
-                                mcm=False, gain=True)
+                                mcm=False, gain=True, tools=tools)
     if kind == "twobranch-vr-mcm":
         from jpegai.models.twobranch import build_two_branch
         return build_two_branch(config, mean_scale=True, split_hyper=True,
-                                mcm=True, mcm_stages=4, gain=True)
+                                mcm=True, mcm_stages=4, gain=True, tools=tools)
     if kind in MCM_STAGES:
         from jpegai.models.twobranch import build_two_branch
         return build_two_branch(config, mean_scale=True, split_hyper=True,
-                                mcm=True, mcm_stages=MCM_STAGES[kind])
+                                mcm=True, mcm_stages=MCM_STAGES[kind], tools=tools)
     if kind in ("twobranch", "twobranch-split", "twobranch-fused"):
         from jpegai.models.twobranch import build_two_branch
         # mean_scale is not optional here: the secondary branch's whole reason for
@@ -77,8 +77,11 @@ def build_any_model(config, kind: str = "scale"):
         # cannot express "this chroma latent is probably near this value".
         return build_two_branch(config, mean_scale=True,
                                 split_hyper=kind != "twobranch",
-                                fused_hyper=kind == "twobranch-fused")
+                                fused_hyper=kind == "twobranch-fused", tools=tools)
     if kind in ("scale", "mean-scale"):
+        if tools:
+            raise ValueError(f"Phase 10 tools need the split-hyper path; kind "
+                             f"{kind!r} has no integer sigma index to key them on")
         from jpegai.models.hyperprior import build_model
         return build_model(config, kind=kind)
     raise ValueError(f"unknown model kind {kind!r}; expected one of {KINDS}")

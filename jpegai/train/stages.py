@@ -72,7 +72,7 @@ from dataclasses import dataclass
 
 #: The freeze vocabulary, in the paper's words. Table II's part lists are written in
 #: these terms ("encoder, decoder, entropy network", "decoder, gain unit").
-PARTS = ("encoder", "decoder", "entropy", "gain")
+PARTS = ("encoder", "decoder", "entropy", "gain", "tools")
 
 #: The reference software's `--frozen_part` vocabulary, and the paper's own long form,
 #: mapped onto ours. Accepted everywhere a part name is, so a reader holding either
@@ -304,6 +304,80 @@ class Stage:
         d = "  sampled dbeta" if self.sample_delta_beta else ""
         return (f"stage {self.name:<3} beta {self.beta:<7g} {self.loss:<4} "
                 f"{self.epochs:>3} ep  trains {'+'.join(self.parts)}{f}{d}")
+
+
+@dataclass(frozen=True)
+class ToolsStage:
+    """Phase 10's freeze-all-but-tools fine-tune, shaped like a Table II `Stage`.
+
+    Not one of Table II's four rows -- it has no Roman numeral and no `config.rate`
+    entry -- but the training loop drives it through the identical seam: `apply_freeze
+    (model, self.parts)` freezes the complement, `part_parameters(model, self.parts)`
+    is the optimiser's list, and `aux_is_trained` reads `"entropy" not in parts` and so
+    turns the aux optimiser off (the entropy network, and with it the quantiles, is
+    frozen while the tools train). It therefore carries the same attributes the loop
+    reads off a `Stage` and needs almost no new branch to run.
+
+    The one thing it does *not* share is the step budget. Table II's `epochs` column is
+    a share of a whole-schedule budget apportioned by `steps_for`; the tools fine-tune
+    stands alone and is sized by `--iterations` directly. `is_tools` is the flag the
+    loop tests to skip the apportionment -- a plain `Stage` does not have it, so
+    `getattr(stage, "is_tools", False)` is False for every Table II row.
+
+    `beta` is carried for the RD loss and the run name, but it barely matters here: all
+    six tools are decoder-side and change no bytes, so the rate is pinned by the frozen
+    encoder+entropy and the objective is effectively pure distortion at a fixed rate --
+    the rate term's gradient w.r.t. the trainable (tool) parameters is zero. `loss` is
+    `"mix"` so MS-SSIM is on: six of the seven graded metrics are perceptual and RVS in
+    particular exists to move FSIM/VMAF, so training the tables against MSE alone would
+    leave on the table exactly what they are for. Extending the objective with the
+    remaining perceptual terms (FSIM/NLPD as differentiable losses) is the RVS
+    refinement the plan flags; the mix loss is the honest floor and is what stages
+    II-IV already train against.
+    """
+
+    beta: float
+    sample_delta_beta: bool = False
+    model_id: int = 0
+    name: str = "tools"
+    loss: str = "mix"
+    epochs: int = 0
+    parts: tuple[str, ...] = ("tools",)
+    is_tools: bool = True
+
+    def __post_init__(self):
+        if self.loss not in LOSSES:
+            raise ValueError(f"loss must be one of {list(LOSSES)}, got {self.loss!r}")
+        if "tools" not in self.parts:
+            raise ValueError(f"a tools stage must train the tools bucket, got "
+                             f"parts {self.parts}")
+
+    @property
+    def frozen(self) -> tuple[str, ...]:
+        """The complement -- everything but the tools, which `apply_freeze` turns off."""
+        return tuple(p for p in PARTS if p not in self.parts)
+
+    def loss_kwargs(self) -> dict:
+        """Match `Stage.loss_kwargs`: force MS-SSIM off only for a pure-MSE stage."""
+        return {"ms_ssim_weight": 0.0} if self.loss == "mse" else {}
+
+    def summary(self) -> str:
+        d = "  sampled dbeta" if self.sample_delta_beta else ""
+        return (f"stage tools beta {self.beta:<7g} {self.loss:<4}   trains "
+                f"{'+'.join(self.parts)}  frozen {'+'.join(self.frozen)}{d}")
+
+
+def tools_stage(*, beta: float, sample_delta_beta: bool = False,
+                model_id: int = 0) -> ToolsStage:
+    """Phase 10's tools fine-tune as a stage. See :class:`ToolsStage`.
+
+    `sample_delta_beta` should be true only when the model has a gain unit: sweeping
+    `Delta_beta` during training walks the tables across the whole rate range (the
+    sigma index RVS/LSBS key on shifts with rate), but a model with no gain unit has
+    nothing to apply the offset to, so the loop determines it from the built model.
+    """
+    return ToolsStage(beta=float(beta), sample_delta_beta=bool(sample_delta_beta),
+                      model_id=int(model_id))
 
 
 def model_entry(config, model_id: int) -> dict:

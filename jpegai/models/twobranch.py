@@ -62,6 +62,27 @@ from jpegai.models.hyperprior import (
     AnalysisTransform, HyperAnalysis, HyperSynthesisScale, SynthesisTransform,
 )
 from jpegai.models.layers import activation, conv, deconv, pad_to_multiple, unpad
+from jpegai.models.tools.lsbs import LatentScalingBeforeSynthesis
+from jpegai.models.tools.postfilter import (
+    EdgeFreeEnhancementLinear, EdgeFreeEnhancementNonlinear,
+    InterComponentInformation, LumaEnhancementFilter,
+)
+from jpegai.models.tools.rvs import ResidualVarianceScaling, pool_sigma
+
+#: Phase 10's decoder-side latent-domain tools, in the paper's own value order (§VI-G/H).
+#: Each is optional at decode time even when its tables are present -- the ablation and
+#: the "skip anyway" semantics both go through `_resolve_tools`.
+LATENT_TOOLS = ("rvs", "lsbs")
+
+#: Phase 10's decoder-side *pixel-domain* post-filters (§VI-M), applied after synthesis in
+#: the paper's own Table IV value order: LEF, ICCI, EFE nonlinear, EFE linear. Same skip-
+#: anyway contract as the latent tools; unlike them they carry real parameters and MACs, and
+#: they do not index the sigma table, so they do not need the split-hyper path.
+PIXEL_TOOLS = ("lef", "icci", "efe-nonlinear", "efe-linear")
+
+#: Every Phase 10 tool, in the order the codec applies them (latent tools before synthesis,
+#: pixel filters after). `--tools all` and the ablation harness resolve against this.
+ALL_TOOLS = LATENT_TOOLS + PIXEL_TOOLS
 
 #: Total downsampling from full resolution to the latent grid. Four stride-2 stages.
 LATENT_STRIDE = 16
@@ -330,6 +351,8 @@ class TwoBranchCodec(nn.Module):
         pad_multiple: int = 64,
         gain: bool = False,
         scaler_precision: int = 10,
+        tools=(),
+        tool_model_ids: int = 4,
     ):
         super().__init__()
         self.fmt = get_format(internal_format)
@@ -432,6 +455,42 @@ class TwoBranchCodec(nn.Module):
             scale_bound=scale_min, precision=precision,
         )
 
+        # -- Phase 10 latent-domain tools (§VI-G/H): RVS, then LSBS ------------
+        # Both index tables by the integer `Iσ`, so both need the split-hyper path --
+        # exactly the same requirement as the gain unit, and for the same reason. They
+        # are owned once, here, and shared across the two branches (like `gc` and
+        # `sigma_index`): the paper's T1/T2 serve luma and chroma alike, and one owner
+        # is also one set of parameters for the freeze-all-but-tables training stage.
+        self.tool_names = frozenset(str(t).strip().lower() for t in tools)
+        unknown = self.tool_names - set(ALL_TOOLS)
+        if unknown:
+            raise ValueError(f"unknown Phase 10 tool(s) {sorted(unknown)}; "
+                             f"expected a subset of {list(ALL_TOOLS)}")
+        # Only the *latent* tools index the sigma table, so only they need the split-hyper
+        # path. The pixel post-filters work on reconstructed planes and are format-only.
+        if (self.tool_names & set(LATENT_TOOLS)) and not split_hyper:
+            raise ValueError(
+                "Phase 10's RVS/LSBS index tables by the integer sigma index, which "
+                "only the split hyper path produces; set split_hyper=True.")
+        # `buckets` is the table extent: `sigma_idx_max_value + 1` = 3968 (docs/06).
+        buckets = (self.sigma_index.max_index + 1) if split_hyper else 0
+        self.rvs = (ResidualVarianceScaling(model_ids=tool_model_ids, buckets=buckets)
+                    if "rvs" in self.tool_names else None)
+        self.lsbs = (LatentScalingBeforeSynthesis(model_ids=tool_model_ids,
+                                                  buckets=buckets)
+                     if "lsbs" in self.tool_names else None)
+        # Pixel-domain post-filters (§VI-M), applied after synthesis. Chroma is the two
+        # planes (Cb, Cr) of the internal YCbCr; ICCI spans luma and both chroma planes. All
+        # identity at init (zero-init residual convs), so attaching them is byte-neutral.
+        chroma_ch = 2
+        self.lef = LumaEnhancementFilter() if "lef" in self.tool_names else None
+        self.icci = (InterComponentInformation(chroma_ch=chroma_ch)
+                     if "icci" in self.tool_names else None)
+        self.efe_nl = (EdgeFreeEnhancementNonlinear(channels=chroma_ch)
+                       if "efe-nonlinear" in self.tool_names else None)
+        self.efe_lin = (EdgeFreeEnhancementLinear(channels=chroma_ch)
+                        if "efe-linear" in self.tool_names else None)
+
     # -- shared plumbing ---------------------------------------------------
     def _to_planes(self, x_rgb: Tensor):
         """RGB -> padded (luma, chroma, luma-on-chroma-grid) plus the pad spec."""
@@ -479,8 +538,75 @@ class TwoBranchCodec(nn.Module):
                 if getattr(b, "gain", None) is not None]
 
     # -- differentiable path -----------------------------------------------
+    # -- Phase 10 tool application -----------------------------------------
+    def _resolve_tools(self, requested) -> frozenset:
+        """Which tools to actually apply this pass. `None` -> every tool that is built.
+
+        The `requested` set is intersected with the built tools, never unioned: a tool
+        can be *skipped at decode even when its tables are present* (§VI-G/H say every
+        one of these is optional at decode time regardless of the syntax flag), but a
+        tool that was never constructed cannot be conjured by asking for it. This is the
+        one gate the ablation harness turns -- `decompress(..., apply_tools=set())`
+        decodes the identical bitstream with the tools off.
+        """
+        if requested is None:
+            return self.tool_names
+        return frozenset(str(t).strip().lower() for t in requested) & self.tool_names
+
+    def _refine_latent(self, y_hat: Tensor, means: Tensor, i_sigma: Tensor | None,
+                       active: frozenset, *, model_id: int = 0) -> Tensor:
+        """Apply RVS then LSBS to one branch's reconstructed latent, before synthesis.
+
+        Branch-agnostic by construction: the residual is recovered as `r = ŷ − p̈`, which
+        equals the decoded `r̂` on the ungained path and the latent-unit residual `r̂/m`
+        on the gained one -- either way the quantity RVS is meant to scale. Both tools
+        share one pooled σ (eq. 7), computed once from the *original* index, matching the
+        spec's "the same pooled σ from RVS". Identity while the tables sit at their init.
+        """
+        if not active or i_sigma is None:
+            return y_hat
+        r = y_hat - means
+        sigma_pool = None
+        if "rvs" in active and self.rvs is not None:
+            o = self.rvs(r, i_sigma, model_id=model_id)
+            r, sigma_pool = o["r"], o["sigma_pool"]
+            y_hat = means + r
+        if "lsbs" in active and self.lsbs is not None:
+            if sigma_pool is None:
+                sigma_pool = pool_sigma(i_sigma, self.sigma_index.max_index + 1)
+            y_hat = self.lsbs(y_hat, r, sigma_pool, model_id=model_id)
+        return y_hat
+
+    def _postfilter(self, luma: Tensor, chroma: Tensor, active: frozenset, *,
+                    luma_only: bool = False):
+        """Apply the pixel-domain post-filters (§VI-M) to the reconstructed planes.
+
+        Order is the paper's Table IV value order -- LEF, ICCI, EFE nonlinear, EFE linear --
+        though every filter is a zero-init residual, so at init the order is immaterial and the
+        planes come back unchanged. Under `luma_only` there is no real chroma (the branch was
+        skipped and `chroma` is a flat grey fill), so the chroma-scope filters and the cross-
+        component ICCI are skipped rather than run on a placeholder; only LEF, which reads luma
+        alone, is applied.
+
+        Returns the (possibly refined) `(luma, chroma)`.
+        """
+        if not active:
+            return luma, chroma
+        if "lef" in active and self.lef is not None:
+            luma = self.lef(luma)
+        if luma_only:
+            return luma, chroma
+        if "icci" in active and self.icci is not None:
+            luma, chroma = self.icci(luma, chroma)
+        if "efe-nonlinear" in active and self.efe_nl is not None:
+            chroma = self.efe_nl(chroma)
+        if "efe-linear" in active and self.efe_lin is not None:
+            chroma = self.efe_lin(chroma)
+        return luma, chroma
+
     def forward(self, x: Tensor, *, noise: bool | None = None,
-                ste: bool = True, delta_beta=0, q_index: Tensor | None = None) -> dict:
+                ste: bool = True, delta_beta=0, q_index: Tensor | None = None,
+                apply_tools=None) -> dict:
         y, uv, supp, pad = self._to_planes(x)
 
         y_lat = self.g_a_y(y)
@@ -499,8 +625,19 @@ class TwoBranchCodec(nn.Module):
                                 noise=noise, ste=ste,
                                 delta_beta=d_uv, q_index=q_index)
 
-        y_rec = self.g_s_y(out_y["y_hat"])
-        uv_rec = self.g_s_uv(out_uv["y_hat"], out_y["y_hat"])      # eq. (3)
+        # Phase 10: refine each latent before synthesis. The chroma synthesis link
+        # (eq. 3) is fed the *refined* luma latent, so both transforms see the same ŷ_Y.
+        active = self._resolve_tools(apply_tools)
+        y_ref = self._refine_latent(out_y["y_hat"], out_y["means"],
+                                    out_y.get("i_sigma"), active)
+        uv_ref = self._refine_latent(out_uv["y_hat"], out_uv["means"],
+                                     out_uv.get("i_sigma"), active)
+
+        y_rec = self.g_s_y(y_ref)
+        uv_rec = self.g_s_uv(uv_ref, y_ref)                        # eq. (3)
+
+        # Phase 10 pixel-domain post-filters (§VI-M), on the reconstructed planes.
+        y_rec, uv_rec = self._postfilter(y_rec, uv_rec, active)
 
         out = {
             "x_hat": self._to_rgb(y_rec, uv_rec, pad),
@@ -586,6 +723,8 @@ class TwoBranchCodec(nn.Module):
             prior = "mean-scale" if self.mean_scale else "scale-only"
         if self.gain:
             prior += "+gain"
+        if self.tool_names:
+            prior += "+" + "+".join(t for t in ALL_TOOLS if t in self.tool_names)
         return (f"{type(self).__name__}  internal {self.fmt.name}  {prior}  "
                 f"luma={self.luma_latent}/{self.luma_hyper}  "
                 f"chroma={self.chroma_latent}/{self.chroma_hyper}  "
@@ -625,6 +764,20 @@ class TwoBranchCodec(nn.Module):
             # *constant* four passes, and that is only checkable if MCM is a number.
             if getattr(br, "mcm", None) is not None:
                 parts.append((f"mcm{suffix}", br.mcm, True))
+        # Phase 10's latent-domain tools are decoder-side and cost ~0 MACs (two table
+        # look-ups), but they carry parameters -- listing them keeps the param total
+        # honest and gives the ablation a named row to read a MAC of zero against.
+        if self.rvs is not None:
+            parts.append(("rvs", self.rvs, True))
+        if self.lsbs is not None:
+            parts.append(("lsbs", self.lsbs, True))
+        # Phase 10's pixel-domain post-filters (§VI-M) are decoder-side and, unlike the
+        # table tools, carry real MACs -- ICCI especially. Each is its own named part so the
+        # summary can show which filter the paper's "only tool with real MAC cost" is.
+        for label, mod in (("lef", self.lef), ("icci", self.icci),
+                           ("efe-nonlinear", self.efe_nl), ("efe-linear", self.efe_lin)):
+            if mod is not None:
+                parts.append((label, mod, True))
         return parts
 
     def gate_branches(self):
@@ -662,6 +815,12 @@ class TwoBranchCodec(nn.Module):
             "decoder": [("g_s_y", self.g_s_y), ("g_s_uv", self.g_s_uv)],
             "entropy": [],
             "gain": [],
+            # Phase 10. The freeze-all-but-tables stage trains exactly this bucket: the
+            # RVS/LSBS tables and nothing else. Present-and-empty on a model built
+            # without tools, for the same reason `gain` is -- the freeze is the
+            # complement of a stage's part list, so an absent bucket is a KeyError and
+            # an unclaimed parameter is one that trains in no stage at all.
+            "tools": [],
         }
         for suffix, br in (("_y", self.branch_y), ("_uv", self.branch_uv)):
             parts["entropy"] += [(f"h_a{suffix}", br.h_a), (f"h_s{suffix}", br.h_s),
@@ -674,6 +833,14 @@ class TwoBranchCodec(nn.Module):
             unit = getattr(br, "gain", None)
             if unit is not None:
                 parts["gain"].append((f"gain{suffix}", unit))
+        if self.rvs is not None:
+            parts["tools"].append(("rvs", self.rvs))
+        if self.lsbs is not None:
+            parts["tools"].append(("lsbs", self.lsbs))
+        for label, mod in (("lef", self.lef), ("icci", self.icci),
+                           ("efe-nonlinear", self.efe_nl), ("efe-linear", self.efe_lin)):
+            if mod is not None:
+                parts["tools"].append((label, mod))
         return parts
 
     def coder_rows(self, out: dict, suffix: str = "") -> Tensor:
@@ -777,7 +944,7 @@ class TwoBranchCodec(nn.Module):
 
     @torch.no_grad()
     def decompress(self, packet: dict, device=None, *,
-                   luma_only: bool = False) -> dict:
+                   luma_only: bool = False, apply_tools=None) -> dict:
         """Decode. `luma_only` skips the entire secondary branch (Phase 4 item 6).
 
         Not a debug switch: it is the machine-consumption path. A vision model that
@@ -800,7 +967,14 @@ class TwoBranchCodec(nn.Module):
         dec_y = self.branch_y.decompress(packet["luma"], self.gaussian_conditional,
                                          device, delta_beta=d_y, q_index=q_index)
         y_hat = dec_y["y_hat"]
-        y_rec = self.g_s_y(y_hat)
+        # Phase 10. `apply_tools` overrides the packet's own tool flags for ablation;
+        # `None` falls back to what the packet enabled, else every built tool. RVS/LSBS
+        # are decoder-side, so the *same* bitstream decodes with the tools on or off.
+        active = self._resolve_tools(
+            apply_tools if apply_tools is not None else packet.get("tools"))
+        y_ref = self._refine_latent(y_hat, dec_y.get("means"),
+                                    dec_y.get("i_sigma"), active)
+        y_rec = self.g_s_y(y_ref)
 
         dec_uv = None
         if luma_only:
@@ -810,7 +984,13 @@ class TwoBranchCodec(nn.Module):
             dec_uv = self.branch_uv.decompress(
                 packet["chroma"], self.gaussian_conditional, device,
                 delta_beta=d_uv, q_index=q_index)
-            uv_rec = self.g_s_uv(dec_uv["y_hat"], y_hat)
+            uv_ref = self._refine_latent(dec_uv["y_hat"], dec_uv.get("means"),
+                                         dec_uv.get("i_sigma"), active)
+            uv_rec = self.g_s_uv(uv_ref, y_ref)
+
+        # Phase 10 pixel-domain post-filters (§VI-M). Under luma_only the chroma plane is a
+        # grey placeholder, so `_postfilter` runs only the luma-scope filter there.
+        y_rec, uv_rec = self._postfilter(y_rec, uv_rec, active, luma_only=luma_only)
 
         x_hat = self._to_rgb(y_rec, uv_rec, packet["pad"])
         return {"x_hat": x_hat.clamp_(0, 1),
@@ -895,7 +1075,7 @@ class TwoBranchCodec(nn.Module):
 def build_two_branch(config, *, mean_scale: bool = True,
                      split_hyper: bool = False, fused_hyper: bool = False,
                      mcm: bool = False, mcm_stages: int | None = None,
-                     gain: bool = False):
+                     gain: bool = False, tools=()):
     """Instantiate from a loaded `jpegai.config` object.
 
     Chroma widths come from `secondary_latent`/`hyper_secondary_latent`, which are
@@ -941,6 +1121,7 @@ def build_two_branch(config, *, mean_scale: bool = True,
         pad_multiple=config.geometry.total_downsample,
         gain=gain,
         scaler_precision=ent.scaler_precision,
+        tools=tools,
     )
 
 
