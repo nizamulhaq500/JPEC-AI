@@ -208,52 +208,61 @@ _prepare_data()
 # "JPEC-AI" in the notebook's own directory finds nothing -- cell 1 cloned the repo to
 # /root/JPEC-AI and every cell here uses that absolute path. Nothing is wrong.
 #
-# So the only real task is getting one 45 MB file from the Mac into the container.
-# Two ways, and this cell handles both:
+# So the only real task is getting one file from the Mac into the container. For
+# Phase 8 that file is the 200k backbone eq. 9 anchors on -- NOT ladder_p5:
+#
+#     checkpoints/ladder_p6_long/beta0.012/final.pt
+#
+# Earlier tiers seeded from ladder_p5, and the tarball already uploaded holds that
+# file, not this one. Rebuild it on the Mac first, then bring the new tarball down:
+#
+#     python cloud/make_seed.py --ladder checkpoints/ladder_p6_long --betas 0.012
+#
+# That drops Adam's moment buffers (loop.py's --warm-start never reads them; step,
+# meta and the 145 twobranch-mcm weights are kept) and rewrites cloud/seeds/
+# seeds.tar.gz -- ~185 MB of checkpoint down to ~50 MB. Two ways in, both handled:
 #
 #   A. Upload it with molab's file browser (the file-tree icon in the left sidebar)
 #      and do not worry where it lands. This cell hunts /root, /tmp, the cwd, the
 #      home directory and /tmp/*/ for seeds.tar.gz and moves it into place itself.
 #
-#   B. No upload button, or it fails on 45 MB? Serve it over HTTP instead. The repo
+#   B. No upload button, or it stalls on ~50 MB? Serve it over HTTP instead. The repo
 #      is public and the container clearly has egress -- it just pulled 4 GB of
 #      DIV2K -- so a GitHub release asset is the least-effort route. On the Mac:
 #
-#        gh release create seeds-p5 cloud/seeds/seeds.tar.gz \
-#            --title "ladder_p5 warm-start seed" \
-#            --notes "Stripped ladder_p5 weights for --warm-start-from. Not a git
-#        object: checkpoints/ are gitignored and exceed GitHub's 100 MB blob limit."
+#        gh release create seeds-p6long cloud/seeds/seeds.tar.gz \
+#            --title "ladder_p6_long warm-start seed" \
+#            --notes "Stripped ladder_p6_long/beta0.012 weights for --warm-start. Not a
+#        git object: checkpoints/ are gitignored and exceed GitHub's 100 MB blob limit."
 #
 #      then set SEED_URL below and re-run this cell:
 #
 #        SEED_URL = ("https://github.com/nizamulhaq500/JPEC-AI/releases/download/"
-#                    "seeds-p5/seeds.tar.gz")
+#                    "seeds-p6long/seeds.tar.gz")
 #
-# Why the seed is not optional. ladder_p6/beta0.012 -- the run every single-beta job
-# here is measured against -- did not start from random weights. It started from
-# ladder_p5/beta0.012 (`--warm-start-from`, see logs/ladder_p6.log). A cold run at
-# beta 0.012 therefore differs from it in TWO ways at once, budget and initialisation,
-# and `ladder_p6_long` exists specifically to measure budget alone. So cell 6
-# hard-stops that run when this seed is missing rather than spend 200,000 steps on a
-# number nothing can be compared to.
-#
-# checkpoints/ is gitignored, which is why this cannot come down with `git pull`.
-# make_seed.py drops Adam's moment buffers (loop.py's --warm-start never reads them),
-# taking 144 MB to 48 MB with a verified-identical load: 117 tensors loaded,
-# 28 initialised fresh, same as the original.
+# Why the seed is not optional. Phase 8 bolts a gain unit onto a *fixed* backbone, and
+# eq. (9)'s rate anchor is that backbone's beta. ladder_p6_long is the 200k beta0.012
+# run; a cold start would swap initialisation as well and pile a second confound onto
+# the variable-rate measurement, so cell 6 hard-stops p8_vr_mcm when this seed is
+# missing. checkpoints/ is gitignored, which is why it cannot arrive by `git pull`.
 
 
 
 SEED_URL = ""      # plan B: a public URL to fetch seeds.tar.gz from, see above
 
+# The one file Phase 8 warm-starts from: the 200k twobranch-mcm backbone eq. 9 anchors
+# on. Earlier tiers seeded from ladder_p5; that is a different file and this cell no
+# longer looks for it (no active job in cell 6 needs it).
+SEED_REL = "checkpoints/ladder_p6_long/beta0.012/final.pt"
+
 
 def _check_seed():
     import shutil
 
-    p5 = ROOT / "checkpoints" / "ladder_p5" / "beta0.012" / "final.pt"
-    if p5.exists():
-        print(f"seed present: {p5.relative_to(ROOT)} "
-              f"({p5.stat().st_size / 2**20:.0f} MB)")
+    seed = ROOT / SEED_REL
+    if seed.exists():
+        print(f"seed present: {seed.relative_to(ROOT)} "
+              f"({seed.stat().st_size / 2**20:.0f} MB)")
         return
 
     dst = ROOT / "seeds.tar.gz"
@@ -273,9 +282,8 @@ def _check_seed():
               f"  searched: {', '.join(str(d) for d in hunt)} and /tmp/*/\n"
               f"  Drop it anywhere in that list -- this cell moves it into place.\n"
               f"  No upload button? Set SEED_URL above and re-run.\n"
-              f"  tier 1's sweep still runs cold (all three runs share seed 1234, so "
-              f"the\n  three-way ranking is intact) -- but ladder_p6_long will refuse "
-              f"to start,\n  and sweep_w6 will not double as the CUDA-vs-MPS bridge.")
+              f"  Phase 8 (p8_vr_mcm) refuses to start until {SEED_REL}\n"
+              f"  is here; tier 1's sweep, if enabled, still runs cold.")
         return
 
     print(f"found {found}  ({found.stat().st_size / 2**20:.0f} MB)")
@@ -283,11 +291,12 @@ def _check_seed():
         shutil.move(str(found), str(dst))     # may cross filesystems, so not rename
         print(f"moved -> {dst}")
     sh(f"tar xzf {dst.name}", cwd=ROOT)
-    sh("ls -la checkpoints/ladder_p5/beta*/final.pt", cwd=ROOT, check=False)
-    if not p5.exists():
-        print("EXTRACTED BUT WRONG SHAPE -- expected "
-              "checkpoints/ladder_p5/beta0.012/final.pt inside the tar.\n"
-              "Re-make it on the Mac with cloud/make_seed.py.")
+    sh(f"ls -la {SEED_REL}", cwd=ROOT, check=False)
+    if not seed.exists():
+        print(f"EXTRACTED BUT WRONG SHAPE -- expected {SEED_REL} inside the tar.\n"
+              "Re-make it on the Mac with:\n"
+              "  python cloud/make_seed.py --ladder checkpoints/ladder_p6_long "
+              "--betas 0.012")
 
 
 _check_seed()
